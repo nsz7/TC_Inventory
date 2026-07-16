@@ -2,19 +2,14 @@
 
 A tissue-culture sample inventory tracker. This repo is a pnpm monorepo containing:
 
-- `artifacts/api-server` — Express + Drizzle ORM API server (runtime app).
+- `artifacts/api-server` — Express + Drizzle ORM API server. Serves the API under `/api` **and** the built React frontend as static files, so the whole app runs as one process on one port.
+- `artifacts/tc-inventory` — the React (Vite) frontend.
 - `lib/db` — Drizzle schema and Postgres client, shared by the server.
 - `lib/api-zod` — Zod request/response validators (generated from `lib/api-spec/openapi.yaml`), shared by the server.
-- `lib/api-client-react` / `lib/api-spec` — frontend API client & OpenAPI codegen config. Not needed to run the server.
+- `lib/api-client-react` — generated React Query API client, used by the frontend.
+- `lib/api-spec` — OpenAPI spec + codegen config for `lib/api-zod` / `lib/api-client-react`. Not needed at runtime.
 - `scripts` — one-off scripts (`seed`, `hello`).
-
-> **Note:** This repo currently contains only the backend. The `tc-inventory` React
-> frontend and `mockup-sandbox` design tool referenced in the original Replit
-> project were not copied into this repo, so there is no UI to build or serve
-> yet — the API server runs standalone. If you add the frontend later under
-> `artifacts/tc-inventory`, wire its build output into
-> `artifacts/api-server` as static files so the whole app serves from one port
-> (skip `mockup-sandbox` — it's a design tool, not part of the shipped app).
+- `artifacts/mockup-sandbox` — a design tool from the original Replit project. Intentionally **excluded** from the pnpm workspace (not in `pnpm-workspace.yaml`) — it's not part of the runtime/build path.
 
 ## Prerequisites
 
@@ -76,6 +71,8 @@ pnpm --filter @workspace/scripts run seed
 
 ## 5. Build
 
+Builds the frontend (`vite build`, output to `artifacts/tc-inventory/dist/public`) and bundles the server:
+
 ```bash
 pnpm run build
 ```
@@ -86,7 +83,7 @@ pnpm run build
 pnpm --filter @workspace/api-server run start
 ```
 
-The server listens on `http://localhost:3000` (or your configured `PORT`). Verify it's up:
+Open `http://localhost:3000` (or your configured `PORT`) in a browser — the API server serves the built React app directly. Verify the API separately if you like:
 
 ```bash
 curl http://localhost:3000/api/healthz

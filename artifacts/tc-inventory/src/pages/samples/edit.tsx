@@ -7,6 +7,7 @@ import {
   getGetSampleQueryKey,
   useUpdateSample,
   getListSamplesQueryKey,
+  type Sample,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useOptions } from "@/hooks/use-options";
@@ -77,7 +78,7 @@ function EditSampleForm({
   sample,
   sampleId,
 }: {
-  sample: NonNullable<ReturnType<typeof useGetSample>["data"]>;
+  sample: Sample;
   sampleId: number;
 }) {
   const [, setLocation] = useLocation();
