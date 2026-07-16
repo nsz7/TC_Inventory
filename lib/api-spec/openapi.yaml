@@ -1,0 +1,651 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: Tissue Culture Inventory API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: samples
+    description: Tissue culture sample management
+  - name: transfers
+    description: Sample transfer records
+  - name: dashboard
+    description: Dashboard summary and analytics
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /samples:
+    get:
+      operationId: listSamples
+      tags: [samples]
+      summary: List all samples
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: stage
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: parentSampleId
+          in: query
+          schema:
+            type: integer
+          description: Filter by parent sample ID to find children of a subculture
+      responses:
+        "200":
+          description: List of samples
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Sample"
+    post:
+      operationId: createSample
+      tags: [samples]
+      summary: Create a new sample
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SampleInput"
+      responses:
+        "201":
+          description: Created sample
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sample"
+
+  /samples/{id}:
+    get:
+      operationId: getSample
+      tags: [samples]
+      summary: Get a sample by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Sample details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sample"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateSample
+      tags: [samples]
+      summary: Update a sample
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SampleUpdate"
+      responses:
+        "200":
+          description: Updated sample
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sample"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteSample
+      tags: [samples]
+      summary: Delete a sample
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /samples/discard-contaminated:
+    post:
+      operationId: discardContaminated
+      tags: [samples]
+      summary: Discard all contaminated samples
+      description: Marks all samples with status "contaminated" as "discarded"
+      responses:
+        "200":
+          description: Number of samples discarded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscardResult"
+
+  /samples/{id}/subculture:
+    post:
+      operationId: subcultureSample
+      tags: [samples]
+      summary: Split a sample into multiple child batches
+      description: Creates new child sample records from this sample and marks the parent as archived. Each output becomes a new sample record linked by parentSampleId.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubcultureInput"
+      responses:
+        "201":
+          description: Updated parent and newly created child samples
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubcultureResult"
+        "404":
+          description: Sample not found
+
+  /samples/{id}/transfers:
+    get:
+      operationId: getSampleTransfers
+      tags: [samples]
+      summary: Get transfer history for a sample
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Transfer records for this sample
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Transfer"
+
+  /transfers:
+    get:
+      operationId: listTransfers
+      tags: [transfers]
+      summary: List all transfers
+      parameters:
+        - name: sampleId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of transfers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Transfer"
+    post:
+      operationId: createTransfer
+      tags: [transfers]
+      summary: Record a new transfer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferInput"
+      responses:
+        "201":
+          description: Created transfer record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transfer"
+
+  /transfers/{id}:
+    get:
+      operationId: getTransfer
+      tags: [transfers]
+      summary: Get a transfer record by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Transfer record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transfer"
+        "404":
+          description: Not found
+
+  /schedule:
+    get:
+      operationId: getSchedule
+      tags: [dashboard]
+      summary: Get upcoming sample actions
+      description: Returns samples with nextActionDate set, sorted by date ascending. Defaults to 60 days ahead plus all overdue.
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+          description: How many days ahead to look (default 60)
+      responses:
+        "200":
+          description: Scheduled sample actions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScheduledSample"
+
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get dashboard summary statistics
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    Sample:
+      type: object
+      required:
+        - id
+        - sampleCode
+        - cultivar
+        - stage
+        - status
+        - quantity
+        - location
+        - dateInitiated
+        - createdAt
+      properties:
+        id:
+          type: integer
+        sampleCode:
+          type: string
+          description: Human-readable sample identifier (e.g. TC-2024-001)
+        cultivar:
+          type: string
+        stage:
+          type: string
+          description: "One of: initiation, multiplication, rooting, acclimatization"
+        mediaType:
+          type: ["string", "null"]
+        containerType:
+          type: ["string", "null"]
+        quantity:
+          type: integer
+          description: Number of vessels/containers
+        location:
+          type: string
+          description: Shelf/rack/room location
+        status:
+          type: string
+          description: "One of: active, contaminated, discarded, archived"
+        notes:
+          type: ["string", "null"]
+        dateInitiated:
+          type: string
+          format: date
+        nextActionDate:
+          type: ["string", "null"]
+          format: date
+          description: Scheduled date for the next subculture or stage transition
+        nextAction:
+          type: ["string", "null"]
+          description: "Description of next action, e.g. Transfer to multiplication"
+        parentSampleId:
+          type: ["integer", "null"]
+          description: ID of the parent sample this batch was subcultured from
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    SampleInput:
+      type: object
+      required:
+        - sampleCode
+        - cultivar
+        - stage
+        - status
+        - quantity
+        - location
+        - dateInitiated
+      properties:
+        sampleCode:
+          type: string
+        cultivar:
+          type: string
+        stage:
+          type: string
+        mediaType:
+          type: string
+        containerType:
+          type: string
+        quantity:
+          type: integer
+        location:
+          type: string
+        status:
+          type: string
+        notes:
+          type: string
+        dateInitiated:
+          type: string
+          format: date
+        nextActionDate:
+          type: string
+          format: date
+        nextAction:
+          type: string
+
+    SampleUpdate:
+      type: object
+      properties:
+        sampleCode:
+          type: string
+        cultivar:
+          type: string
+        stage:
+          type: string
+        mediaType:
+          type: string
+        containerType:
+          type: string
+        quantity:
+          type: integer
+        location:
+          type: string
+        status:
+          type: string
+        notes:
+          type: string
+        dateInitiated:
+          type: string
+          format: date
+        nextActionDate:
+          type: string
+          format: date
+        nextAction:
+          type: string
+        parentSampleId:
+          type: integer
+          nullable: true
+
+    Transfer:
+      type: object
+      required:
+        - id
+        - fromSampleId
+        - transferDate
+        - technician
+        - quantityTransferred
+        - createdAt
+      properties:
+        id:
+          type: integer
+        fromSampleId:
+          type: integer
+        toSampleId:
+          type: ["integer", "null"]
+        fromSampleCode:
+          type: ["string", "null"]
+        toSampleCode:
+          type: ["string", "null"]
+        transferDate:
+          type: string
+          format: date
+        fromLocation:
+          type: ["string", "null"]
+        toLocation:
+          type: ["string", "null"]
+        mediaType:
+          type: ["string", "null"]
+        quantityTransferred:
+          type: integer
+        technician:
+          type: string
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    TransferInput:
+      type: object
+      required:
+        - fromSampleId
+        - transferDate
+        - technician
+        - quantityTransferred
+      properties:
+        fromSampleId:
+          type: integer
+        toSampleId:
+          type: integer
+        transferDate:
+          type: string
+          format: date
+        fromLocation:
+          type: string
+        toLocation:
+          type: string
+        mediaType:
+          type: string
+        quantityTransferred:
+          type: integer
+        technician:
+          type: string
+        notes:
+          type: string
+
+    SubcultureOutputSpec:
+      type: object
+      required:
+        - stage
+        - quantity
+        - location
+      properties:
+        stage:
+          type: string
+          description: "Stage for this output batch, e.g. multiplication, long-term storage"
+        mediaType:
+          type: ["string", "null"]
+        containerType:
+          type: ["string", "null"]
+        quantity:
+          type: integer
+          minimum: 1
+        location:
+          type: string
+        notes:
+          type: ["string", "null"]
+
+    SubcultureInput:
+      type: object
+      required:
+        - transferDate
+        - technician
+        - outputs
+      properties:
+        transferDate:
+          type: string
+          format: date
+        technician:
+          type: string
+        notes:
+          type: ["string", "null"]
+          description: General notes for all transfer records created
+        outputs:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/SubcultureOutputSpec"
+
+    SubcultureResult:
+      type: object
+      required:
+        - parent
+        - children
+      properties:
+        parent:
+          $ref: "#/components/schemas/Sample"
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/Sample"
+
+    DashboardSummary:
+      type: object
+      required:
+        - totalSamples
+        - totalTransfers
+        - byStatus
+        - byStage
+        - recentTransfers
+      properties:
+        totalSamples:
+          type: integer
+        totalTransfers:
+          type: integer
+        byStatus:
+          type: array
+          items:
+            $ref: "#/components/schemas/CountByLabel"
+        byStage:
+          type: array
+          items:
+            $ref: "#/components/schemas/CountByLabel"
+        recentTransfers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transfer"
+
+    ScheduledSample:
+      type: object
+      required:
+        - id
+        - sampleCode
+        - cultivar
+        - stage
+        - status
+        - quantity
+        - location
+        - dateInitiated
+        - nextActionDate
+        - createdAt
+      properties:
+        id:
+          type: integer
+        sampleCode:
+          type: string
+        cultivar:
+          type: string
+        stage:
+          type: string
+        status:
+          type: string
+        quantity:
+          type: integer
+        location:
+          type: string
+        mediaType:
+          type: ["string", "null"]
+        dateInitiated:
+          type: string
+          format: date
+        nextActionDate:
+          type: string
+          format: date
+        nextAction:
+          type: ["string", "null"]
+        daysUntilAction:
+          type: integer
+          description: Negative = overdue
+        createdAt:
+          type: string
+          format: date-time
+
+    DiscardResult:
+      type: object
+      required:
+        - discarded
+      properties:
+        discarded:
+          type: integer
+          description: Number of samples marked as discarded
+
+    CountByLabel:
+      type: object
+      required:
+        - label
+        - count
+      properties:
+        label:
+          type: string
+        count:
+          type: integer

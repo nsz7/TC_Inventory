@@ -1,0 +1,11 @@
+ID,Cultivar,stage_code,Stage,Date,Media,Vessel,Vessels,Vessels_current,Status,Location
+FA26_001,E_123,i,introduction,2/9/2026,MS,jar,1,0,removed,Lab K
+FA26_001,E_123,r1,revitalizatoin,4/9/2026,AC,jar,2,1,Inactive,Lab K
+FA26_001,E_123,m1,multiplicaton,5/22/2026,MS,magenta.s,1,1,Active,Shelf A
+FA26_001,E_123,m2,multiplicaton,5/22/2026,AC,magenta,1,1,Active,Shelf A
+FA26_001,E_123,s,long-term storage,5/22/2026,AC,magenta,1,1,Active,Shelf A
+FA26_002,U_33,i,introduction,1/1/2026,MS,magenta,1,0,removed,Shelf A
+FA26_002,U_33,m1,multiplicaton,2/1/2026,MS,magenta,2,0,removed,Shelf A
+FA26_002,U_33,m2,multiplicaton,3/1/2026,MS,magenta,5,0,removed,Shelf A
+FA26_002,U_33,r1,revitalizatoin,4/1/2026,AC,magenta,5,5,Active,Shelf A
+FA26_002,U_33,s,long-term storage,5/1/2026,LS,magenta,3,3,Active,Cold room
