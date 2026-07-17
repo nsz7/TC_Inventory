@@ -13,7 +13,7 @@ A tissue-culture sample inventory tracker. This repo is a pnpm monorepo containi
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) 20 or later (LTS; tested with Node 22)
+- [Node.js](https://nodejs.org/) 20 or later (tested with Node 22 and Node 24; `.nvmrc` pins 22 if you use nvm)
 - [pnpm](https://pnpm.io/) 10.x — `npm install -g pnpm`
 - A local [PostgreSQL](https://www.postgresql.org/) server (tested with Postgres 16)
 
@@ -94,3 +94,4 @@ curl http://localhost:3000/api/samples
 
 - `pnpm --filter @workspace/db run push-force` force-pushes schema changes if `push` reports data-loss warnings it can't resolve interactively — only use this if you're fine dropping/altering existing data.
 - `replit.txt`, `replitignore.txt`, `gitignore.txt`, `npmrc.txt` are leftover exports from the original Replit project (their dotfiles never made it into this repo). They aren't read by anything — real `.gitignore` / `.npmrc` files live at the repo root. Safe to ignore or delete.
+- **Windows:** `lib/db/drizzle.config.ts` normalizes its schema path to forward slashes before handing it to `drizzle-kit` — the glob library it uses to resolve `schema` doesn't match Windows-style backslash paths, so without that normalization `pnpm --filter @workspace/db run push` fails with "No schema files found" even though the file exists. This is unrelated to Node.js version (verified working on both Node 22 and Node 24) — it only mattered on Windows.
