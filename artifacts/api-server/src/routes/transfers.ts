@@ -80,7 +80,10 @@ router.post("/transfers", async (req, res) => {
   const body = CreateTransferBody.parse(req.body);
   const [transfer] = await db
     .insert(transfersTable)
-    .values(body)
+    .values({
+      ...body,
+      transferDate: body.transferDate.toISOString().split("T")[0],
+    })
     .returning();
 
   const fromAlias = db

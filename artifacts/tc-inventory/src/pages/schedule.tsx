@@ -29,7 +29,7 @@ type Bucket = {
   borderColor: string;
   bgColor: string;
   icon: React.ReactNode;
-  items: ReturnType<typeof useGetSchedule>["data"];
+  items: ScheduledSample[];
 };
 
 function urgencyGroup(daysUntil: number): "overdue" | "today" | "thisWeek" | "upcoming" {

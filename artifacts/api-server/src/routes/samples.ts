@@ -16,6 +16,16 @@ import { sql } from "drizzle-orm";
 
 const router = Router();
 
+/** Convert a coerced Date (from zod) to the YYYY-MM-DD string drizzle's pg `date` columns expect. */
+function toDateString(value: Date): string {
+  return value.toISOString().split("T")[0];
+}
+
+function toDateStringOrNull(value: Date | null | undefined): string | null | undefined {
+  if (value === null || value === undefined) return value;
+  return toDateString(value);
+}
+
 router.get("/samples", async (req, res) => {
   const query = ListSamplesQueryParams.parse(req.query);
   const conditions = [];
@@ -46,7 +56,12 @@ router.post("/samples", async (req, res) => {
   const body = CreateSampleBody.parse(req.body);
   const [sample] = await db
     .insert(samplesTable)
-    .values({ ...body, updatedAt: new Date() })
+    .values({
+      ...body,
+      dateInitiated: toDateString(body.dateInitiated),
+      nextActionDate: toDateStringOrNull(body.nextActionDate),
+      updatedAt: new Date(),
+    })
     .returning();
   res.status(201).json(sample);
 });
@@ -69,7 +84,12 @@ router.patch("/samples/:id", async (req, res) => {
   const body = UpdateSampleBody.parse(req.body);
   const [sample] = await db
     .update(samplesTable)
-    .set({ ...body, updatedAt: new Date() })
+    .set({
+      ...body,
+      dateInitiated: body.dateInitiated ? toDateString(body.dateInitiated) : undefined,
+      nextActionDate: toDateStringOrNull(body.nextActionDate),
+      updatedAt: new Date(),
+    })
     .where(eq(samplesTable.id, id))
     .returning();
   if (!sample) {
