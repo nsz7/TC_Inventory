@@ -1,7 +1,7 @@
-ID,stage_code,Cultivar,Stage,Date,Media,Vessel,Vessels,Vessels_current,Status,Location
-FA26_001,,Desiree-WT,multiplication,2026-03-25,MS,magenta box,10,1,Active,GC1
-FA26_001,m1,Atlantic,multiplication,2026-03-10,MS + 0.1mg/L BAP,magenta box,5,5,Active,Shelf A-1
-FA26_001,m2,Atlantic,multiplication,2026-03-10,MS + 0.1mg/L BAP,culture tube,3,3,Active,Shelf A-2
-FA26_002,,Desiree,initiation,2026-04-01,MS,culture tube,6,6,Active,Shelf B-1
-FA26_003,,Cavendish,rooting,2026-02-20,1/2 MS,magenta box,12,10,Active,Shelf C-3
-FA26_004,,Russet Burbank,long-term storage,2026-01-05,MS + glycerol,cryovial,20,20,Active,Freezer F-
+SampleCode,Subcode,Variety,Strain,Stage,TransferDate,Medium,ContainerType,InitialQuantity,Location
+FA26_001,01,Desiree,WT,initiation,2026-03-25,MS,magenta box,10,Shelf A-1
+FA26_001,02,Desiree,WT,multiplication,2026-04-10,MS + 0.1mg/L BAP,magenta box,5,Shelf A-1
+FA26_001,03,Desiree,WT,multiplication,2026-04-10,MS + 0.1mg/L BAP,culture tube,3,Shelf A-2
+FA26_002,01,Desiree,,initiation,2026-04-01,MS,culture tube,6,Shelf B-1
+FA26_003,01,Cavendish,,initiation,2026-02-20,1/2 MS,magenta box,12,Shelf C-3
+FA26_004,01,Russet Burbank,,long-term storage,2026-01-05,MS + glycerol,cryovial,20,Freezer F-1

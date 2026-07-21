@@ -1,17 +1,25 @@
 import { Router, type IRouter } from "express";
-import healthRouter from "./health";
 import samplesRouter from "./samples";
-import transfersRouter from "./transfers";
+import batchesRouter from "./batches";
 import dashboardRouter from "./dashboard";
 import optionsRouter, { seedOptions } from "./options";
+import varietiesRouter from "./varieties";
+import strainsRouter from "./strains";
+import appSettingsRouter from "./appSettings";
+import usersRouter from "./users";
+import changeLogRouter from "./changeLog";
 
 const router: IRouter = Router();
 
-router.use(healthRouter);
 router.use(samplesRouter);
-router.use(transfersRouter);
+router.use(batchesRouter);
 router.use(dashboardRouter);
 router.use(optionsRouter);
+router.use(varietiesRouter);
+router.use(strainsRouter);
+router.use(appSettingsRouter);
+router.use(usersRouter);
+router.use(changeLogRouter);
 
 // Seed default lookup options if empty
 seedOptions().catch((err) => console.error("seedOptions failed:", err));

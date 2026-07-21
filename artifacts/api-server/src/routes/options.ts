@@ -1,89 +1,86 @@
 import { Router } from "express";
-import { db } from "@workspace/db";
-import { lookupOptionsTable } from "@workspace/db";
-import { eq, asc } from "drizzle-orm";
+import { z } from "zod";
+import { db, lookupOptionsTable } from "@workspace/db";
+import { eq, and, asc } from "drizzle-orm";
+import { requireAdmin } from "../lib/auth";
 
 const router = Router();
 
-const DEFAULT_STAGES = [
-  "initiation",
-  "multiplication",
-  "rooting",
-  "acclimatization",
-  "revitalization",
-  "long-term storage",
-];
+const DEFAULT_OPTIONS: Record<string, string[]> = {
+  stage: ["initiation", "multiplication", "rooting", "acclimatization", "revitalization", "long-term storage"],
+  container: ["culture tube", "magenta box", "petri dish", "jar", "flask", "cryovial", "other"],
+  media: ["MS", "MS + 0.1mg/L BAP", "MS + 1mg/L BAP", "WPM", "B5", "1/2 MS"],
+  location: ["Shelf A", "Shelf B", "Growth Room 1", "Growth Room 2"],
+  category_code: ["FA", "BC", "CV"],
+  discard_reason: ["contaminated", "poor growth", "used in experiment", "other"],
+  archive_reason: ["line lost", "project ended", "transferred out", "other"],
+};
 
-const DEFAULT_CONTAINERS = [
-  "culture tube",
-  "magenta box",
-  "petri dish",
-  "jar",
-  "flask",
-  "cryovial",
-  "other",
-];
-
-const DEFAULT_MEDIA = [
-  "MS",
-  "MS + 0.1mg/L BAP",
-  "MS + 1mg/L BAP",
-  "WPM",
-  "B5",
-  "1/2 MS",
-];
-
-/** Seed defaults if the category has no entries yet */
 async function seedIfEmpty(category: string, defaults: string[]) {
-  const existing = await db
-    .select()
-    .from(lookupOptionsTable)
-    .where(eq(lookupOptionsTable.category, category));
+  const existing = await db.select().from(lookupOptionsTable).where(eq(lookupOptionsTable.category, category));
   if (existing.length === 0) {
-    await db.insert(lookupOptionsTable).values(
-      defaults.map((label, i) => ({ category, label, sortOrder: i })),
-    );
+    await db.insert(lookupOptionsTable).values(defaults.map((label, i) => ({ category, label, sortOrder: i })));
   }
 }
 
 export async function seedOptions() {
-  await seedIfEmpty("stage", DEFAULT_STAGES);
-  await seedIfEmpty("container", DEFAULT_CONTAINERS);
-  await seedIfEmpty("media", DEFAULT_MEDIA);
+  for (const [category, defaults] of Object.entries(DEFAULT_OPTIONS)) {
+    await seedIfEmpty(category, defaults);
+  }
 }
 
+const ListOptionsQuery = z.object({
+  category: z.string().optional(),
+  includeInactive: z.coerce.boolean().optional().default(false),
+});
+
 router.get("/options", async (req, res) => {
-  const category = typeof req.query.category === "string" ? req.query.category : undefined;
+  const query = ListOptionsQuery.parse(req.query);
+  const conditions = [];
+  if (query.category) conditions.push(eq(lookupOptionsTable.category, query.category));
+  if (!query.includeInactive) conditions.push(eq(lookupOptionsTable.active, true));
+
   const rows = await db
     .select()
     .from(lookupOptionsTable)
-    .where(category ? eq(lookupOptionsTable.category, category) : undefined)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(asc(lookupOptionsTable.sortOrder), asc(lookupOptionsTable.createdAt));
   res.json(rows);
 });
 
+const CreateOptionBody = z.object({ category: z.string().min(1), label: z.string().min(1) });
+
+// Any authenticated user can add an entry inline while filling out a form
+// (e.g. a new location); only Settings management (deactivating, editing)
+// is admin-only.
 router.post("/options", async (req, res) => {
-  const { category, label } = req.body as { category?: string; label?: string };
-  if (!category || !label) {
-    res.status(400).json({ error: "category and label are required" });
-    return;
-  }
+  const body = CreateOptionBody.parse(req.body);
   const existing = await db
     .select()
     .from(lookupOptionsTable)
-    .where(eq(lookupOptionsTable.category, category));
+    .where(and(eq(lookupOptionsTable.category, body.category), eq(lookupOptionsTable.active, true)));
   const [created] = await db
     .insert(lookupOptionsTable)
-    .values({ category, label, sortOrder: existing.length })
+    .values({ category: body.category, label: body.label, sortOrder: existing.length })
     .returning();
   res.status(201).json(created);
 });
 
-router.delete("/options/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  if (Number.isNaN(id)) { res.status(400).json({ error: "invalid id" }); return; }
-  await db.delete(lookupOptionsTable).where(eq(lookupOptionsTable.id, id));
-  res.status(204).send();
+const UpdateOptionBody = z.object({
+  label: z.string().min(1).optional(),
+  active: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+});
+
+router.patch("/options/:id", requireAdmin, async (req, res) => {
+  const id = z.coerce.number().parse(req.params.id);
+  const body = UpdateOptionBody.parse(req.body);
+  const [updated] = await db.update(lookupOptionsTable).set(body).where(eq(lookupOptionsTable.id, id)).returning();
+  if (!updated) {
+    res.status(404).json({ error: "Option not found" });
+    return;
+  }
+  res.json(updated);
 });
 
 export default router;

@@ -9,7 +9,11 @@ import {
   Settings2,
   Menu,
   X,
+  LogOut,
+  UserCog,
 } from "lucide-react";
+import { useCurrentUser, useLogout } from "@/hooks/use-auth";
+import { Button } from "@/components/ui/button";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -46,6 +50,41 @@ function NavLinks({ location, onNavigate }: { location: string; onNavigate?: () 
   );
 }
 
+function AccountSection() {
+  const { data: currentUser } = useCurrentUser();
+  const logout = useLogout();
+
+  if (!currentUser) return null;
+
+  return (
+    <div className="border-t border-sidebar-border p-3 space-y-2">
+      <div className="px-3">
+        <p className="text-sm font-medium text-sidebar-foreground truncate">{currentUser.displayName}</p>
+        <p className="text-xs text-sidebar-foreground/60 capitalize">{currentUser.role}</p>
+      </div>
+      {currentUser.role === "admin" && (
+        <Link href="/admin/users">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground cursor-pointer">
+            <UserCog className="h-4 w-4 shrink-0" />
+            Manage accounts
+          </div>
+        </Link>
+      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="w-full justify-start gap-2 text-sidebar-foreground"
+        onClick={() => logout.mutate()}
+        disabled={logout.isPending}
+        data-testid="button-logout"
+      >
+        <LogOut className="h-4 w-4" />
+        Log out
+      </Button>
+    </div>
+  );
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -62,6 +101,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <NavLinks location={location} />
+        <AccountSection />
       </aside>
 
       {/* ── Mobile/tablet drawer overlay ─────────────────────────────── */}
@@ -90,6 +130,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
         <NavLinks location={location} onNavigate={() => setDrawerOpen(false)} />
+        <AccountSection />
       </aside>
 
       {/* ── Main content ─────────────────────────────────────────────── */}
