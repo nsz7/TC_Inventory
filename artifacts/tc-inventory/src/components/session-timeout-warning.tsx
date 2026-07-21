@@ -35,7 +35,7 @@ export function SessionTimeoutWarning() {
     return () => clearInterval(interval);
   }, [queryClient]);
 
-  async function stayLoggedIn() {
+  async function extendSession() {
     try {
       await apiFetch("/api/auth/me");
       recordActivity();
@@ -56,7 +56,7 @@ export function SessionTimeoutWarning() {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogAction onClick={stayLoggedIn}>Stay signed in</AlertDialogAction>
+          <AlertDialogAction onClick={extendSession}>Extend session</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
