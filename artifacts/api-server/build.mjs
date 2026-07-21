@@ -35,6 +35,8 @@ async function buildAll() {
       "canvas",
       "bcrypt",
       "argon2",
+      // Reads a sibling table.sql via __dirname at runtime; bundling breaks that lookup.
+      "connect-pg-simple",
       "fsevents",
       "re2",
       "farmhash",
