@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@workspace/db": "workspace:*",
+    "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "drizzle-orm": "catalog:"
   },

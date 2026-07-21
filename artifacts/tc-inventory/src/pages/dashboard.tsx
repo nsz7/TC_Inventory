@@ -1,15 +1,34 @@
-import { useGetDashboardSummary, getGetDashboardSummaryQueryKey } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format } from "date-fns";
 import { parseLocalDate } from "@/lib/dates";
 import { Link } from "wouter";
-import { ArrowRight, TestTube2, ArrowRightLeft, Activity } from "lucide-react";
+import { ArrowRight, TestTube2, Activity, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+interface DashboardSummary {
+  totalSamples: number;
+  totalBatches: number;
+  contaminationAlerts: number;
+  byStage: { label: string; count: number }[];
+  recentEvents: {
+    id: number;
+    batchId: number;
+    eventType: string;
+    quantity: number;
+    reason: string | null;
+    targetBatchId: number | null;
+    eventDate: string;
+    createdAt: string;
+  }[];
+}
+
 export default function Dashboard() {
-  const { data: summary, isLoading } = useGetDashboardSummary({
-    query: { queryKey: getGetDashboardSummaryQueryKey() }
+  const { data: summary, isLoading } = useQuery({
+    queryKey: ["dashboard", "summary"],
+    queryFn: () => apiFetch<DashboardSummary>("/api/dashboard/summary"),
   });
 
   if (isLoading) {
@@ -43,12 +62,6 @@ export default function Dashboard() {
               New Sample
             </Button>
           </Link>
-          <Link href="/transfers/new">
-            <Button variant="secondary">
-              <ArrowRightLeft className="mr-2 h-4 w-4" />
-              Record Transfer
-            </Button>
-          </Link>
         </div>
       </div>
 
@@ -64,11 +77,20 @@ export default function Dashboard() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Transfers</CardTitle>
-            <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Batches</CardTitle>
+            <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{summary.totalTransfers}</div>
+            <div className="text-2xl font-bold">{summary.totalBatches}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Contamination Alerts</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{summary.contaminationAlerts}</div>
           </CardContent>
         </Card>
         <Card>
@@ -85,42 +107,38 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Recent Transfers</CardTitle>
-            <CardDescription>The latest subculture and transfer events</CardDescription>
+            <CardTitle>Recent Activity</CardTitle>
+            <CardDescription>The latest container events</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {summary.recentTransfers.length === 0 ? (
-                <p className="text-muted-foreground text-sm py-4 text-center">No recent transfers.</p>
+              {summary.recentEvents.length === 0 ? (
+                <p className="text-muted-foreground text-sm py-4 text-center">No recent activity.</p>
               ) : (
-                summary.recentTransfers.map(transfer => (
-                  <div key={transfer.id} className="flex items-center justify-between p-4 border rounded-md">
+                summary.recentEvents.map(event => (
+                  <div key={event.id} className="flex items-center justify-between p-4 border rounded-md">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm font-medium">{transfer.fromSampleCode}</span>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-mono text-sm font-medium">{transfer.toSampleCode || "External"}</span>
+                        <span className="font-mono text-sm font-medium">Batch #{event.batchId}</span>
+                        {event.targetBatchId && (
+                          <>
+                            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                            <span className="font-mono text-sm font-medium">Batch #{event.targetBatchId}</span>
+                          </>
+                        )}
                       </div>
-                      <p className="text-sm text-muted-foreground">
-                        {transfer.technician} • {format(parseLocalDate(transfer.transferDate), 'MMM d, yyyy')}
+                      <p className="text-sm text-muted-foreground capitalize">
+                        {event.eventType.replace("_", " ")}
+                        {event.reason ? ` — ${event.reason}` : ""} • {format(parseLocalDate(event.eventDate), 'MMM d, yyyy')}
                       </p>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-medium">Qty: {transfer.quantityTransferred}</div>
+                      <div className="text-sm font-medium">Qty: {event.quantity}</div>
                     </div>
                   </div>
                 ))
               )}
             </div>
-            {summary.recentTransfers.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-border">
-                <Link href="/transfers">
-                  <Button variant="ghost" className="w-full text-primary hover:text-primary">
-                    View all transfers <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
-                </Link>
-              </div>
-            )}
           </CardContent>
         </Card>
 
