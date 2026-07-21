@@ -200,6 +200,52 @@ async function rescue(
   return child;
 }
 
+async function poolBatches(
+  parents: { batch: typeof batchesTable.$inferSelect; consumedQuantity: number }[],
+  fields: {
+    stage: string;
+    transferDate: string;
+    medium?: string;
+    containerType?: string;
+    location: string;
+    producedQuantity: number;
+  },
+  createdBy: number,
+) {
+  const anyParentAlerted = parents.some((p) => p.batch.contaminationAlert);
+  const subcode = await nextSubcode(parents[0].batch.sampleId);
+  const [child] = await db
+    .insert(batchesTable)
+    .values({
+      sampleId: parents[0].batch.sampleId,
+      subcode,
+      stage: fields.stage,
+      transferDate: fields.transferDate,
+      medium: fields.medium ?? parents[0].batch.medium,
+      containerType: fields.containerType ?? parents[0].batch.containerType,
+      location: fields.location,
+      initialQuantity: fields.producedQuantity,
+      contaminationAlert: anyParentAlerted,
+      cleanTransferCount: 0,
+      createdBy,
+      updatedBy: createdBy,
+    })
+    .returning();
+
+  for (const p of parents) {
+    await db.insert(containerEventsTable).values({
+      batchId: p.batch.id,
+      eventType: "transfer_out",
+      quantity: p.consumedQuantity,
+      targetBatchId: child.id,
+      eventDate: fields.transferDate,
+      createdBy,
+    });
+  }
+  await db.insert(batchLineageTable).values(parents.map((p) => ({ childBatchId: child.id, parentBatchId: p.batch.id })));
+  return child;
+}
+
 // --- Lookup list defaults (mirrors artifacts/api-server/src/routes/options.ts) ---
 
 const DEFAULT_OPTIONS: Record<string, string[]> = {
@@ -332,17 +378,16 @@ async function main() {
   await discard(s4b1, 5, "poor growth", "2026-04-01", by);
   console.log(`${sample4.sampleCode}: batch ${s4b1.subcode} fully discarded (depleted, computed count 0).`);
 
-  // --- Pooling: a batch with two parents (schema demo; the pooling action itself is Part 2) ---
-  const pooled = await createInitiationBatch(
-    sample1.id,
-    { stage: "multiplication", transferDate: "2026-04-01", medium: "MS", containerType: "magenta box", location: "Shelf A-1", initialQuantity: 4 },
+  // --- Pooling: a batch with two parents, each contributing recorded stock ---
+  const pooled = await poolBatches(
+    [
+      { batch: s1b1, consumedQuantity: 2 },
+      { batch: s1b2, consumedQuantity: 2 },
+    ],
+    { stage: "multiplication", transferDate: "2026-04-01", medium: "MS", containerType: "magenta box", location: "Shelf A-1", producedQuantity: 4 },
     by,
   );
-  await db.insert(batchLineageTable).values([
-    { childBatchId: pooled.id, parentBatchId: s1b2.id },
-    { childBatchId: pooled.id, parentBatchId: s1b1.id },
-  ]);
-  console.log(`${sample1.sampleCode}: batch ${pooled.subcode} pooled from two parent batches.`);
+  console.log(`${sample1.sampleCode}: batch ${pooled.subcode} pooled from two parent batches (2 containers each).`);
 
   console.log(`Created user: ${tech.username} (user role, for testing non-admin access).`);
 }
