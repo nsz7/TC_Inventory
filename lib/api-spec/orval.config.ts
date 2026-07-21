@@ -1,6 +1,14 @@
 import { defineConfig, InputTransformerFn } from "orval";
 import path from "path";
 
+// Same normalization as lib/db/drizzle.config.ts: path.resolve()/__dirname
+// produce backslash-separated paths on Windows, which some path consumers
+// (glob-matching in particular) silently fail to match against. Normalize
+// to forward slashes before handing paths to orval.
+function toPosixPath(p: string): string {
+  return p.split(path.sep).join("/");
+}
+
 const root = path.resolve(__dirname, "..", "..");
 const apiClientReactSrc = path.resolve(root, "lib", "api-client-react", "src");
 const apiZodSrc = path.resolve(root, "lib", "api-zod", "src");
@@ -22,7 +30,7 @@ export default defineConfig({
       },
     },
     output: {
-      workspace: apiClientReactSrc,
+      workspace: toPosixPath(apiClientReactSrc),
       target: "generated",
       client: "react-query",
       mode: "split",
@@ -34,7 +42,7 @@ export default defineConfig({
           includeHttpResponseReturnType: false,
         },
         mutator: {
-          path: path.resolve(apiClientReactSrc, "custom-fetch.ts"),
+          path: toPosixPath(path.resolve(apiClientReactSrc, "custom-fetch.ts")),
           name: "customFetch",
         },
       },
@@ -48,7 +56,7 @@ export default defineConfig({
       },
     },
     output: {
-      workspace: apiZodSrc,
+      workspace: toPosixPath(apiZodSrc),
       client: "zod",
       target: "generated",
       schemas: { path: "generated/types", type: "typescript" },
