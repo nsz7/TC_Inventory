@@ -13,7 +13,7 @@ import {
   lookupOptionsTable,
   appSettingsTable,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 
 // --- Local copies of the same assignment rules the API routes use --------
 // (Kept self-contained rather than importing from the api-server package,
@@ -135,6 +135,15 @@ async function subculture(
   return child;
 }
 
+// Mirrors artifacts/api-server/src/lib/contamination.ts's markHadContamination:
+// only writes if not already true, so a batch that's discarded-from and later
+// rescued-from doesn't get a redundant second write.
+async function markHadContamination(batchId: number, updatedBy: number) {
+  const [batch] = await db.select({ hadContamination: batchesTable.hadContamination }).from(batchesTable).where(eq(batchesTable.id, batchId));
+  if (batch?.hadContamination) return;
+  await db.update(batchesTable).set({ hadContamination: true, updatedBy }).where(eq(batchesTable.id, batchId));
+}
+
 async function discard(
   batch: typeof batchesTable.$inferSelect,
   quantity: number,
@@ -151,7 +160,7 @@ async function discard(
     createdBy,
   });
   if (reason.toLowerCase() === "contaminated") {
-    await db.update(batchesTable).set({ hadContamination: true, updatedBy: createdBy }).where(eq(batchesTable.id, batch.id));
+    await markHadContamination(batch.id, createdBy);
   }
 }
 
@@ -196,7 +205,7 @@ async function rescue(
     createdBy,
   });
   await db.insert(batchLineageTable).values({ childBatchId: child.id, parentBatchId: source.id });
-  await db.update(batchesTable).set({ hadContamination: true, updatedBy: createdBy }).where(eq(batchesTable.id, source.id));
+  await markHadContamination(source.id, createdBy);
   return child;
 }
 
@@ -267,11 +276,54 @@ async function seedOptions() {
   }
 }
 
-async function main() {
+const SEEDED_VARIETIES = ["Desiree", "Cavendish", "Russet Burbank"];
+const SEEDED_SAMPLE_CODES = ["FA26_001", "FA26_002", "FA26_003", "FA26_004"];
+
+/**
+ * Checks presence of the actual rows this script creates, not just a proxy
+ * like "does the admin user exist" — a DB that's been truncated but kept
+ * its admin row (or vice versa) must not be reported as fully seeded.
+ */
+async function checkSeedState() {
   const [existingAdmin] = await db.select().from(usersTable).where(eq(usersTable.username, "admin"));
-  if (existingAdmin) {
-    console.log("Seed data already present (admin user exists) — skipping.");
+  const [existingTech] = await db.select().from(usersTable).where(eq(usersTable.username, "tech1"));
+  const varieties = await db
+    .select({ label: varietiesTable.label })
+    .from(varietiesTable)
+    .where(inArray(varietiesTable.label, SEEDED_VARIETIES));
+  const samples = await db
+    .select({ sampleCode: samplesTable.sampleCode })
+    .from(samplesTable)
+    .where(inArray(samplesTable.sampleCode, SEEDED_SAMPLE_CODES));
+
+  const checks = [
+    { label: "users (admin, tech1)", present: Boolean(existingAdmin) && Boolean(existingTech) },
+    { label: `varieties (${SEEDED_VARIETIES.join(", ")})`, present: varieties.length === SEEDED_VARIETIES.length },
+    { label: `samples (${SEEDED_SAMPLE_CODES.join(", ")})`, present: samples.length === SEEDED_SAMPLE_CODES.length },
+  ];
+
+  return {
+    checks,
+    allPresent: checks.every((c) => c.present),
+    nonePresent: checks.every((c) => !c.present),
+  };
+}
+
+async function main() {
+  const { checks, allPresent, nonePresent } = await checkSeedState();
+
+  if (allPresent) {
+    console.log("Seed data already present — skipping:");
+    for (const c of checks) console.log(`  - ${c.label}: found`);
     return;
+  }
+
+  if (!nonePresent) {
+    console.log("Database is in a PARTIALLY seeded state — refusing to seed on top of it:");
+    for (const c of checks) console.log(`  - ${c.label}: ${c.present ? "found" : "MISSING"}`);
+    console.log("Truncate the seed-relevant tables (or drop/recreate the database) and rerun from a clean slate.");
+    await pool.end();
+    process.exit(1);
   }
 
   await seedOptions();
@@ -316,7 +368,9 @@ async function main() {
   );
   console.log(`${sample1.sampleCode}: initiation -> multiplication -> rooting (3 batches).`);
 
-  // --- Sample 2: contamination alert raised, then cleared after 2 clean transfers ---
+  // --- Sample 2: alert originates from a rescue (never from a discard),
+  // clears after 2 consecutive clean transfers, then a later contaminated
+  // discard on the now-clean batch sets had_contamination with NO new alert ---
   const sample2 = await createSample("FA", desiree.id, desireeTc12.id, by);
   const s2b1 = await createInitiationBatch(
     sample2.id,
@@ -328,27 +382,39 @@ async function main() {
     { consumedQuantity: 6, producedQuantity: 6, stage: "multiplication", transferDate: "2026-02-15", location: "Shelf B-1" },
     by,
   );
+  // Two containers show visible contamination and are discarded outright —
+  // had_contamination on s2b2, no alert (never raised on the batch where
+  // contamination was observed).
   await discard(s2b2, 2, "contaminated", "2026-02-20", by);
-  // Simulates the user confirming the "raise alert?" prompt after the contaminated discard.
-  const [s2b2Alerted] = await db
-    .update(batchesTable)
-    .set({ contaminationAlert: true, cleanTransferCount: 0, updatedBy: by })
-    .where(eq(batchesTable.id, s2b2.id))
-    .returning();
-  const s2b3 = await subculture(
-    s2b2Alerted,
-    { consumedQuantity: 2, producedQuantity: 2, stage: "multiplication", transferDate: "2026-03-01", location: "Shelf B-1", appearedCleanAtTransfer: true },
+  // A third, separately-suspect container is rescued instead of discarded —
+  // decontaminated and subcultured. Only the rescued batch carries the alert.
+  const s2b3 = await rescue(
+    s2b2,
+    { consumedQuantity: 1, producedQuantity: 1, stage: "multiplication", transferDate: "2026-02-22", location: "Shelf B-1" },
     by,
   );
-  // Second consecutive clean transfer clears the alert on the resulting batch.
-  await subculture(
+  const s2b4 = await subculture(
     s2b3,
+    { consumedQuantity: 1, producedQuantity: 1, stage: "multiplication", transferDate: "2026-03-01", location: "Shelf B-1", appearedCleanAtTransfer: true },
+    by,
+  );
+  const s2b5 = await subculture(
+    s2b4,
     { consumedQuantity: 1, producedQuantity: 1, stage: "rooting", transferDate: "2026-03-20", location: "Shelf B-2", appearedCleanAtTransfer: true },
     by,
   );
-  console.log(`${sample2.sampleCode}: contamination alert raised on batch ${s2b3.subcode}'s parent, cleared on batch after 2 clean transfers.`);
+  // Second consecutive clean transfer cleared the alert on s2b5. A later,
+  // unrelated contaminated discard on this now-clean batch sets
+  // had_contamination again but raises no new alert — the alert doesn't
+  // come back just because material was later discarded as contaminated.
+  await discard(s2b5, 1, "contaminated", "2026-04-10", by);
+  console.log(
+    `${sample2.sampleCode}: rescue on ${s2b2.subcode} raised the alert on ${s2b3.subcode}, cleared after 2 clean transfers on ${s2b5.subcode}, then a later contaminated discard left had_contamination with no new alert.`,
+  );
 
-  // --- Sample 3: rescue lineage (contaminated batch -> decontaminated child) ---
+  // --- Sample 3: a second, independent rescue lineage that hasn't cleared
+  // yet — includes one non-clean transfer to show the streak resetting to 0
+  // rather than clearing, contrasting with sample 2's fully-cleared chain ---
   const sample3 = await createSample("FA", cavendish.id, null, by);
   const s3b1 = await createInitiationBatch(
     sample3.id,
@@ -360,13 +426,34 @@ async function main() {
     { consumedQuantity: 5, producedQuantity: 5, stage: "multiplication", transferDate: "2026-02-20", location: "Shelf C-1" },
     by,
   );
+  // One container shows visible contamination and is discarded outright —
+  // had_contamination on s3b2, no alert.
   await discard(s3b2, 1, "contaminated", "2026-03-01", by);
-  await rescue(
+  // A second, separately-suspect container is rescued instead — the rescued
+  // batch (not s3b2) carries the alert. The rescue's consumed quantity is the
+  // suspect container itself, not leftover clean stock from the batch.
+  const s3b3 = await rescue(
     s3b2,
-    { consumedQuantity: 3, producedQuantity: 2, stage: "multiplication", transferDate: "2026-03-05", location: "Shelf C-2" },
+    { consumedQuantity: 1, producedQuantity: 1, stage: "multiplication", transferDate: "2026-03-05", location: "Shelf C-2" },
     by,
   );
-  console.log(`${sample3.sampleCode}: contaminated batch ${s3b2.subcode} rescued into a new decontaminated batch.`);
+  // Still looks uncertain at the next transfer — the streak resets to 0
+  // rather than clearing, and the alert stays raised.
+  const s3b4 = await subculture(
+    s3b3,
+    { consumedQuantity: 1, producedQuantity: 1, stage: "multiplication", transferDate: "2026-03-15", location: "Shelf C-2", appearedCleanAtTransfer: false },
+    by,
+  );
+  // One clean transfer since the reset — one more would clear it, but this
+  // lineage is deliberately left active/uncleared for testing.
+  await subculture(
+    s3b4,
+    { consumedQuantity: 1, producedQuantity: 1, stage: "rooting", transferDate: "2026-03-25", location: "Shelf C-2", appearedCleanAtTransfer: true },
+    by,
+  );
+  console.log(
+    `${sample3.sampleCode}: rescue on ${s3b2.subcode} raised the alert on ${s3b3.subcode}; still active after a reset and one clean transfer.`,
+  );
 
   // --- Sample 4: fully discarded, depleted batch ----------------------------
   const sample4 = await createSample("FA", russet.id, null, by);

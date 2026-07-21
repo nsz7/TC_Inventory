@@ -6,6 +6,8 @@ import {
   batchesTable,
   containerEventsTable,
   batchLineageTable,
+  varietiesTable,
+  strainsTable,
   computedQuantitySql,
 } from "@workspace/db";
 import { asc, eq } from "drizzle-orm";
@@ -23,6 +25,8 @@ async function main() {
       id: batchesTable.id,
       sampleId: batchesTable.sampleId,
       sampleCode: samplesTable.sampleCode,
+      varietyLabel: varietiesTable.label,
+      strainLabel: strainsTable.label,
       subcode: batchesTable.subcode,
       stage: batchesTable.stage,
       transferDate: batchesTable.transferDate,
@@ -35,6 +39,8 @@ async function main() {
     })
     .from(batchesTable)
     .innerJoin(samplesTable, eq(samplesTable.id, batchesTable.sampleId))
+    .innerJoin(varietiesTable, eq(varietiesTable.id, samplesTable.varietyId))
+    .leftJoin(strainsTable, eq(strainsTable.id, samplesTable.strainId))
     .orderBy(asc(samplesTable.sampleCode), asc(batchesTable.subcode));
 
   for (const batch of batches) {
@@ -59,6 +65,7 @@ async function main() {
       .where(eq(batchLineageTable.childBatchId, batch.id));
 
     console.log(`\n=== Batch #${batch.id}  ${code}  (stage: ${batch.stage}, transferred: ${batch.transferDate}) ===`);
+    console.log(`  variety: ${batch.varietyLabel}${batch.strainLabel ? `  strain: ${batch.strainLabel}` : ""}`);
     console.log(`  initial_quantity: ${batch.initialQuantity}`);
     if (events.length === 0) {
       console.log(`  container_events: (none)`);
@@ -82,6 +89,28 @@ async function main() {
   }
 
   console.log(`\n${batches.length} batches total.`);
+
+  const strainsByVariety = await db
+    .select({ varietyLabel: varietiesTable.label, strainLabel: strainsTable.label })
+    .from(strainsTable)
+    .innerJoin(varietiesTable, eq(varietiesTable.id, strainsTable.varietyId))
+    .orderBy(asc(varietiesTable.label), asc(strainsTable.label));
+
+  const grouped = new Map<string, string[]>();
+  for (const row of strainsByVariety) {
+    grouped.set(row.varietyLabel, [...(grouped.get(row.varietyLabel) ?? []), row.strainLabel]);
+  }
+
+  console.log(`\n=== Varieties and strains ===`);
+  for (const [variety, strains] of grouped) {
+    console.log(`  ${variety}: ${strains.join(", ")}`);
+  }
+  const multiStrainVariety = [...grouped.entries()].find(([, strains]) => strains.length >= 2);
+  console.log(
+    multiStrainVariety
+      ? `  Two-strain requirement: satisfied by ${multiStrainVariety[0]} (${multiStrainVariety[1].join(", ")}).`
+      : `  Two-strain requirement: NOT satisfied — no variety has more than one strain.`,
+  );
 }
 
 main()

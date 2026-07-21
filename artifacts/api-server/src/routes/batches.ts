@@ -10,7 +10,7 @@ import {
 import { eq, desc } from "drizzle-orm";
 import { requireAdmin } from "../lib/auth";
 import { nextSubcode } from "../lib/subcode";
-import { computeInheritedContamination, RESCUE_CONTAMINATION_STATE } from "../lib/contamination";
+import { computeInheritedContamination, RESCUE_CONTAMINATION_STATE, markHadContamination } from "../lib/contamination";
 import { recordChanges } from "../lib/changeLog";
 
 const router = Router();
@@ -245,10 +245,7 @@ router.post("/batches/:id/rescue", async (req, res) => {
       parentBatchId: source.id,
     });
 
-    await tx
-      .update(batchesTable)
-      .set({ hadContamination: true, updatedBy: req.currentUser!.id, updatedAt: new Date() })
-      .where(eq(batchesTable.id, source.id));
+    await markHadContamination(tx, source.id, req.currentUser!.id);
 
     return newBatch;
   });
@@ -287,30 +284,28 @@ router.post("/batches/:id/discard", async (req, res) => {
 
   const isContaminated = body.reason.toLowerCase() === CONTAMINATED_REASON;
 
-  await db.insert(containerEventsTable).values({
-    batchId: id,
-    eventType: "discard",
-    quantity: body.quantity,
-    reason: body.reason,
-    eventDate: body.eventDate.toISOString().split("T")[0],
-    note: body.note ?? null,
-    createdBy: req.currentUser!.id,
-  });
+  const [event] = await db
+    .insert(containerEventsTable)
+    .values({
+      batchId: id,
+      eventType: "discard",
+      quantity: body.quantity,
+      reason: body.reason,
+      eventDate: body.eventDate.toISOString().split("T")[0],
+      note: body.note ?? null,
+      createdBy: req.currentUser!.id,
+    })
+    .returning();
 
+  // A contaminated discard never raises contamination_alert on this batch —
+  // the alert is a forward-looking warning that only ever originates from a
+  // rescue (POST /batches/:id/rescue). had_contamination is the permanent,
+  // non-propagating record that this batch showed contamination.
   if (isContaminated) {
-    await db
-      .update(batchesTable)
-      .set({ hadContamination: true, updatedBy: req.currentUser!.id, updatedAt: new Date() })
-      .where(eq(batchesTable.id, id));
+    await markHadContamination(db, id, req.currentUser!.id);
   }
 
-  res.status(201).json({
-    // Per the brief's stated default for the open question: suggest raising
-    // the alert (pre-checked, dismissible) rather than raising it
-    // automatically. The frontend should prompt and, if confirmed, call
-    // POST /batches/:id/contamination-alert.
-    suggestRaiseAlert: isContaminated && !batch.contaminationAlert,
-  });
+  res.status(201).json(event);
 });
 
 const CorrectionBody = z.object({
@@ -360,9 +355,16 @@ router.post("/batches/:id/correction", async (req, res) => {
   res.status(201).json(event);
 });
 
-const ContaminationAlertBody = z.object({ alert: z.boolean() });
+const ContaminationAlertBody = z.object({ alert: z.boolean(), reason: z.string().min(1) });
 
-router.post("/batches/:id/contamination-alert", async (req, res) => {
+/**
+ * Manual admin override of contaminationAlert — bypasses the normal
+ * discard/rescue-derived path entirely, so unlike that path this always
+ * requires an explicit reason (no automatic derivation to fall back on).
+ * Admin-only; frontend must render this distinctly from alerts that arose
+ * through discard/rescue (PR 2 — batch detail timeline).
+ */
+router.post("/batches/:id/contamination-alert", requireAdmin, async (req, res) => {
   const id = z.coerce.number().parse(req.params.id);
   const body = ContaminationAlertBody.parse(req.body);
 
@@ -389,6 +391,7 @@ router.post("/batches/:id/contamination-alert", async (req, res) => {
     { contaminationAlert: before.contaminationAlert },
     { contaminationAlert: after.contaminationAlert },
     req.currentUser!.id,
+    body.reason,
   );
 
   res.json(after);

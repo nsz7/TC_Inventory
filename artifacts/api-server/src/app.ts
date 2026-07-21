@@ -1,10 +1,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import express, { type Express } from "express";
+import express, { type Express, type ErrorRequestHandler } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
+import { ZodError } from "zod";
 import { pool } from "@workspace/db";
 import healthRouter from "./routes/health";
 import authRouter from "./routes/auth";
@@ -70,5 +71,19 @@ app.use(express.static(clientDist));
 app.get(/^(?!\/api).*/, (req, res) => {
   res.sendFile(path.join(clientDist, "index.html"));
 });
+
+// Must be registered last (Express identifies error handlers by arity).
+// Without this, any thrown/rejected error — including every route's
+// z.parse() on invalid input — fell through to Express's default handler,
+// which returns an HTML 500 rather than a JSON error the frontend can read.
+const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+  if (err instanceof ZodError) {
+    res.status(400).json({ error: "Invalid request", issues: err.issues });
+    return;
+  }
+  req.log?.error(err);
+  res.status(500).json({ error: "Internal server error" });
+};
+app.use(errorHandler);
 
 export default app;

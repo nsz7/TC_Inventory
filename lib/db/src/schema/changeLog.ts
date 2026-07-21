@@ -8,6 +8,7 @@ export const changeLogTable = pgTable("change_log", {
   fieldName: text("field_name").notNull(),
   oldValue: text("old_value"),
   newValue: text("new_value"),
+  reason: text("reason"), // set for actions that require an explanation, e.g. a manual contamination-alert override
   changedBy: integer("changed_by").references(() => usersTable.id),
   changedAt: timestamp("changed_at").defaultNow().notNull(),
 });
