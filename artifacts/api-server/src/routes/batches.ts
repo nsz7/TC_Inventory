@@ -10,7 +10,7 @@ import {
 import { eq, desc } from "drizzle-orm";
 import { requireAdmin } from "../lib/auth";
 import { nextSubcode } from "../lib/subcode";
-import { computeInheritedContamination, RESCUE_CONTAMINATION_STATE } from "../lib/contamination";
+import { computeInheritedContamination, RESCUE_CONTAMINATION_STATE, markHadContamination } from "../lib/contamination";
 import { recordChanges } from "../lib/changeLog";
 
 const router = Router();
@@ -245,10 +245,7 @@ router.post("/batches/:id/rescue", async (req, res) => {
       parentBatchId: source.id,
     });
 
-    await tx
-      .update(batchesTable)
-      .set({ hadContamination: true, updatedBy: req.currentUser!.id, updatedAt: new Date() })
-      .where(eq(batchesTable.id, source.id));
+    await markHadContamination(tx, source.id, req.currentUser!.id);
 
     return newBatch;
   });
@@ -305,10 +302,7 @@ router.post("/batches/:id/discard", async (req, res) => {
   // rescue (POST /batches/:id/rescue). had_contamination is the permanent,
   // non-propagating record that this batch showed contamination.
   if (isContaminated) {
-    await db
-      .update(batchesTable)
-      .set({ hadContamination: true, updatedBy: req.currentUser!.id, updatedAt: new Date() })
-      .where(eq(batchesTable.id, id));
+    await markHadContamination(db, id, req.currentUser!.id);
   }
 
   res.status(201).json(event);

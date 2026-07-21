@@ -135,6 +135,15 @@ async function subculture(
   return child;
 }
 
+// Mirrors artifacts/api-server/src/lib/contamination.ts's markHadContamination:
+// only writes if not already true, so a batch that's discarded-from and later
+// rescued-from doesn't get a redundant second write.
+async function markHadContamination(batchId: number, updatedBy: number) {
+  const [batch] = await db.select({ hadContamination: batchesTable.hadContamination }).from(batchesTable).where(eq(batchesTable.id, batchId));
+  if (batch?.hadContamination) return;
+  await db.update(batchesTable).set({ hadContamination: true, updatedBy }).where(eq(batchesTable.id, batchId));
+}
+
 async function discard(
   batch: typeof batchesTable.$inferSelect,
   quantity: number,
@@ -151,7 +160,7 @@ async function discard(
     createdBy,
   });
   if (reason.toLowerCase() === "contaminated") {
-    await db.update(batchesTable).set({ hadContamination: true, updatedBy: createdBy }).where(eq(batchesTable.id, batch.id));
+    await markHadContamination(batch.id, createdBy);
   }
 }
 
@@ -196,7 +205,7 @@ async function rescue(
     createdBy,
   });
   await db.insert(batchLineageTable).values({ childBatchId: child.id, parentBatchId: source.id });
-  await db.update(batchesTable).set({ hadContamination: true, updatedBy: createdBy }).where(eq(batchesTable.id, source.id));
+  await markHadContamination(source.id, createdBy);
   return child;
 }
 
