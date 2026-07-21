@@ -287,16 +287,23 @@ router.post("/batches/:id/discard", async (req, res) => {
 
   const isContaminated = body.reason.toLowerCase() === CONTAMINATED_REASON;
 
-  await db.insert(containerEventsTable).values({
-    batchId: id,
-    eventType: "discard",
-    quantity: body.quantity,
-    reason: body.reason,
-    eventDate: body.eventDate.toISOString().split("T")[0],
-    note: body.note ?? null,
-    createdBy: req.currentUser!.id,
-  });
+  const [event] = await db
+    .insert(containerEventsTable)
+    .values({
+      batchId: id,
+      eventType: "discard",
+      quantity: body.quantity,
+      reason: body.reason,
+      eventDate: body.eventDate.toISOString().split("T")[0],
+      note: body.note ?? null,
+      createdBy: req.currentUser!.id,
+    })
+    .returning();
 
+  // A contaminated discard never raises contamination_alert on this batch —
+  // the alert is a forward-looking warning that only ever originates from a
+  // rescue (POST /batches/:id/rescue). had_contamination is the permanent,
+  // non-propagating record that this batch showed contamination.
   if (isContaminated) {
     await db
       .update(batchesTable)
@@ -304,13 +311,7 @@ router.post("/batches/:id/discard", async (req, res) => {
       .where(eq(batchesTable.id, id));
   }
 
-  res.status(201).json({
-    // Per the brief's stated default for the open question: suggest raising
-    // the alert (pre-checked, dismissible) rather than raising it
-    // automatically. The frontend should prompt and, if confirmed, call
-    // POST /batches/:id/contamination-alert.
-    suggestRaiseAlert: isContaminated && !batch.contaminationAlert,
-  });
+  res.status(201).json(event);
 });
 
 const CorrectionBody = z.object({
