@@ -34,6 +34,7 @@ export async function recordChanges(
   before: Record<string, unknown>,
   after: Record<string, unknown>,
   changedBy: number | undefined,
+  reason?: string,
 ): Promise<void> {
   const rows: (typeof changeLogTable.$inferInsert)[] = [];
 
@@ -48,6 +49,7 @@ export async function recordChanges(
       fieldName: field,
       oldValue,
       newValue,
+      reason: reason ?? null,
       changedBy,
     });
   }

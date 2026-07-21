@@ -355,9 +355,16 @@ router.post("/batches/:id/correction", async (req, res) => {
   res.status(201).json(event);
 });
 
-const ContaminationAlertBody = z.object({ alert: z.boolean() });
+const ContaminationAlertBody = z.object({ alert: z.boolean(), reason: z.string().min(1) });
 
-router.post("/batches/:id/contamination-alert", async (req, res) => {
+/**
+ * Manual admin override of contaminationAlert — bypasses the normal
+ * discard/rescue-derived path entirely, so unlike that path this always
+ * requires an explicit reason (no automatic derivation to fall back on).
+ * Admin-only; frontend must render this distinctly from alerts that arose
+ * through discard/rescue (PR 2 — batch detail timeline).
+ */
+router.post("/batches/:id/contamination-alert", requireAdmin, async (req, res) => {
   const id = z.coerce.number().parse(req.params.id);
   const body = ContaminationAlertBody.parse(req.body);
 
@@ -384,6 +391,7 @@ router.post("/batches/:id/contamination-alert", async (req, res) => {
     { contaminationAlert: before.contaminationAlert },
     { contaminationAlert: after.contaminationAlert },
     req.currentUser!.id,
+    body.reason,
   );
 
   res.json(after);
