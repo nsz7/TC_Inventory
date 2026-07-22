@@ -9,6 +9,7 @@ import SamplesList from "@/pages/samples/list";
 import NewSample from "@/pages/samples/new";
 import SampleDetail from "@/pages/samples/detail";
 import EditSample from "@/pages/samples/edit";
+import BatchDetail from "@/pages/batches/detail";
 import TransfersList from "@/pages/transfers/list";
 import NewTransfer from "@/pages/transfers/new";
 import Schedule from "@/pages/schedule";
@@ -49,6 +50,7 @@ function Router() {
         <Route path="/samples/:id/edit" component={EditSample} />
         <Route path="/samples/:id" component={SampleDetail} />
         <Route path="/samples" component={SamplesList} />
+        <Route path="/batches/:id" component={BatchDetail} />
         <Route path="/transfers/new" component={NewTransfer} />
         <Route path="/transfers" component={TransfersList} />
         <Route path="/schedule" component={Schedule} />

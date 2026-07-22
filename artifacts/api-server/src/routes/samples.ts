@@ -8,13 +8,25 @@ import {
   strainsTable,
   computedQuantitySql,
 } from "@workspace/db";
-import { eq, and, or, ilike } from "drizzle-orm";
+import { eq, and, or, ilike, sql } from "drizzle-orm";
 import { requireAdmin } from "../lib/auth";
 import { buildSampleCode, nextSerial } from "../lib/sampleCode";
 import { nextSubcode } from "../lib/subcode";
 import { recordChanges } from "../lib/changeLog";
 
 const router = Router();
+
+// Display-only: a contamination event anywhere in this sample's batches
+// should be visible from the collapsed row, without implying an active
+// alert (that stays per-batch, shown only on expand). Never propagates
+// beyond "did this happen somewhere under this sample" — the batch detail
+// page is still the only place showing which batch it actually was.
+function hadContaminationRollupSql() {
+  return sql<boolean>`exists(
+    select 1 from batches b
+    where b.sample_id = "samples"."id" and b.had_contamination = true and b.voided = false
+  )`;
+}
 
 const sampleColumns = {
   id: samplesTable.id,
@@ -30,6 +42,7 @@ const sampleColumns = {
   archivedReason: samplesTable.archivedReason,
   voided: samplesTable.voided,
   voidedReason: samplesTable.voidedReason,
+  hadContaminationRollup: hadContaminationRollupSql(),
   createdAt: samplesTable.createdAt,
   updatedAt: samplesTable.updatedAt,
 };
