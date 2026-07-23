@@ -151,7 +151,7 @@ export default function Dashboard() {
               {summary.byStage.map(stage => (
                 <div key={stage.label} className="flex items-center justify-between">
                   <div className="text-sm font-medium capitalize">{stage.label}</div>
-                  <div className="text-sm text-muted-foreground">{stage.count} samples</div>
+                  <div className="text-sm text-muted-foreground">{stage.count} batch{stage.count === 1 ? "" : "es"}</div>
                 </div>
               ))}
             </div>
