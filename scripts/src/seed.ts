@@ -470,7 +470,7 @@ async function main() {
   const sample3 = await createSample("FA", cavendish.id, cavendishStandard.id, by);
   const s3b1 = await createInitiationBatch(
     sample3.id,
-    { stage: "initiation", transferDate: "2025-04-01", medium: "MS", containerType: "magenta box", location: "Shelf C-1", initialQuantity: 10 },
+    { stage: "initiation", transferDate: "2026-01-05", medium: "MS", containerType: "magenta box", location: "Shelf C-1", initialQuantity: 10 },
     by,
   );
   const s3b2 = await subculture(
@@ -507,14 +507,18 @@ async function main() {
     `${sample3.sampleCode}: rescue on ${s3b2.subcode} raised the alert on ${s3b3.subcode}; still active after a reset and one clean transfer.`,
   );
 
-  // A storage batch well past the default 6-month renewal interval — healthy
+  // A storage batch past the default 6-month renewal interval — healthy
   // quantity, to demonstrate storage age overdue independently of low stock.
+  // Only modestly overdue rather than by a wide margin: it has to stay in
+  // the same year as the sample code (FA26 -> 2026) and after its parent
+  // (2026-01-05), and 2026 hasn't been running long enough yet for a date
+  // that satisfies both to be more than a few months past the 6-month mark.
   await subculture(
     s3b1,
-    { consumedQuantity: 2, producedQuantity: 8, stage: "long-term storage", transferDate: "2025-05-01", location: "Freezer F-1" },
+    { consumedQuantity: 2, producedQuantity: 8, stage: "long-term storage", transferDate: "2026-01-12", location: "Freezer F-1" },
     by,
   );
-  console.log(`${sample3.sampleCode}: storage batch transferred 2025-05-01 — well overdue for renewal.`);
+  console.log(`${sample3.sampleCode}: storage batch transferred 2026-01-12 — overdue for renewal.`);
 
   // --- Sample 4: fully discarded, depleted batch ----------------------------
   const sample4 = await createSample("FA", russet.id, russetStandard.id, by);
