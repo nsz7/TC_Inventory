@@ -123,14 +123,26 @@ async function subculture(
     })
     .returning();
 
+  // Mirrors the app's subculture route: a "subculture" record (quantity 0)
+  // anchors the source-side timeline unconditionally, and consumption — if
+  // any — is a separate, targetless transfer_out event.
   await db.insert(containerEventsTable).values({
     batchId: source.id,
-    eventType: "transfer_out",
-    quantity: output.consumedQuantity,
+    eventType: "subculture",
+    quantity: 0,
     targetBatchId: child.id,
     eventDate: output.transferDate,
     createdBy,
   });
+  if (output.consumedQuantity > 0) {
+    await db.insert(containerEventsTable).values({
+      batchId: source.id,
+      eventType: "transfer_out",
+      quantity: output.consumedQuantity,
+      eventDate: output.transferDate,
+      createdBy,
+    });
+  }
   await db.insert(batchLineageTable).values({ childBatchId: child.id, parentBatchId: source.id });
   return child;
 }
@@ -198,12 +210,21 @@ async function rescue(
 
   await db.insert(containerEventsTable).values({
     batchId: source.id,
-    eventType: "transfer_out",
-    quantity: fields.consumedQuantity,
+    eventType: "subculture",
+    quantity: 0,
     targetBatchId: child.id,
     eventDate: fields.transferDate,
     createdBy,
   });
+  if (fields.consumedQuantity > 0) {
+    await db.insert(containerEventsTable).values({
+      batchId: source.id,
+      eventType: "transfer_out",
+      quantity: fields.consumedQuantity,
+      eventDate: fields.transferDate,
+      createdBy,
+    });
+  }
   await db.insert(batchLineageTable).values({ childBatchId: child.id, parentBatchId: source.id });
   await markHadContamination(source.id, createdBy);
   return child;
@@ -263,7 +284,7 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   media: ["MS", "MS + 0.1mg/L BAP", "MS + 1mg/L BAP", "WPM", "B5", "1/2 MS", "MS + glycerol"],
   location: ["Shelf A-1", "Shelf A-2", "Shelf B-1", "Shelf C-1", "Shelf C-2", "Freezer F-1"],
   category_code: ["FA", "BC", "CV"],
-  discard_reason: ["contaminated", "poor growth", "used in experiment", "other"],
+  discard_reason: ["contaminated", "poor growth", "used in experiment", "fully transferred — source retired", "other"],
   correction_reason: ["miscount", "previously unrecorded", "other"],
   archive_reason: ["line lost", "project ended", "transferred out", "other"],
 };

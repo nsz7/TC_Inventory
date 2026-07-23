@@ -6,6 +6,13 @@ import { sql, type SQL } from "drizzle-orm";
  * computed — every route selecting a batch's live count must select this
  * expression rather than storing/reading a mutable quantity column.
  *
+ * `subculture` events are deliberately not summed here: they record "a child
+ * batch was created from this one" (always quantity 0, one row per child, see
+ * the subculture route), not a change in count. Containers actually consumed
+ * during a subculture are written as a separate `transfer_out` event with no
+ * target_batch_id, which this function already accounts for since it sums
+ * transfer_out by batch_id and event_type only, regardless of target.
+ *
  * Uses literal table-qualified identifiers (not interpolated Column
  * references) inside the correlated subqueries: interpolating
  * `batchesTable.id` renders as a bare `"id"`, which Postgres resolves

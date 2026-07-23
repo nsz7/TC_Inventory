@@ -133,7 +133,7 @@ export default function Dashboard() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-medium">Qty: {event.quantity}</div>
+                      {event.quantity > 0 && <div className="text-sm font-medium">Qty: {event.quantity}</div>}
                     </div>
                   </div>
                 ))

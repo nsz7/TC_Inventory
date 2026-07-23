@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowRightLeft, Trash2, ChevronRight, AlertTriangle, History, Network, Pencil } from "lucide-react";
+import { ArrowRightLeft, Trash2, ChevronRight, AlertTriangle, History, Network, Pencil, Split } from "lucide-react";
 import { TransferDialog } from "@/components/transfer-dialog";
 import { DiscardDialog } from "@/components/discard-dialog";
 import { BatchEditDialog } from "@/components/batch-edit-dialog";
@@ -46,7 +46,7 @@ interface TimelineEntry {
   occurredAt: string;
   userDisplayName: string | null;
   // event
-  eventType?: "transfer_out" | "discard" | "correction";
+  eventType?: "transfer_out" | "discard" | "correction" | "subculture";
   quantity?: number;
   reason?: string | null;
   eventDate?: string;
@@ -79,13 +79,32 @@ function TimelineRow({ entry }: { entry: TimelineEntry }) {
   const who = entry.userDisplayName ?? "Unknown";
 
   if (entry.kind === "event") {
+    if (entry.eventType === "subculture") {
+      return (
+        <div className="flex items-start gap-2 py-2 border-b last:border-0">
+          <Split className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+          <p className="text-sm">
+            Subcultured{entry.targetSubcode ? ` to -${entry.targetSubcode}` : ""} —{" "}
+            <span className="text-muted-foreground">{who}, {when}</span>
+          </p>
+        </div>
+      );
+    }
     if (entry.eventType === "transfer_out") {
+      // A target_subcode means this is the legacy per-output-consumption
+      // shape (one transfer_out per child). No target means this is the
+      // operation-level "N containers used up" event that accompanies one
+      // or more subculture records above — it never claims a single
+      // destination, since the consumed containers didn't collectively
+      // land in one place.
       return (
         <div className="flex items-start gap-2 py-2 border-b last:border-0">
           <ArrowRightLeft className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
           <p className="text-sm">
-            Transferred {entry.quantity} container{entry.quantity === 1 ? "" : "s"}
-            {entry.targetSubcode ? ` to -${entry.targetSubcode}` : ""} —{" "}
+            {entry.targetSubcode
+              ? `Transferred ${entry.quantity} container${entry.quantity === 1 ? "" : "s"} to -${entry.targetSubcode}`
+              : `${entry.quantity} container${entry.quantity === 1 ? "" : "s"} used up in this transfer`}
+            {" — "}
             <span className="text-muted-foreground">{who}, {when}</span>
           </p>
         </div>

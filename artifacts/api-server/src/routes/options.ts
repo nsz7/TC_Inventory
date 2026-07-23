@@ -12,7 +12,7 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   media: ["MS", "MS + 0.1mg/L BAP", "MS + 1mg/L BAP", "WPM", "B5", "1/2 MS"],
   location: ["Shelf A", "Shelf B", "Growth Room 1", "Growth Room 2"],
   category_code: ["FA", "BC", "CV"],
-  discard_reason: ["contaminated", "poor growth", "used in experiment", "other"],
+  discard_reason: ["contaminated", "poor growth", "used in experiment", "fully transferred — source retired", "other"],
   correction_reason: ["miscount", "previously unrecorded", "other"],
   archive_reason: ["line lost", "project ended", "transferred out", "other"],
 };

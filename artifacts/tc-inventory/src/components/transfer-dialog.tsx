@@ -10,12 +10,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+// Matches the discard_reason option added for this flow — pre-filled so
+// closing out the source never starts from a blank, unexplained reason.
+const DEFAULT_CLOSE_OUT_REASON = "fully transferred — source retired";
 
 interface OutputRow {
   key: string;
-  consumedQuantity: string;
   producedQuantity: string;
   stage: string;
   medium: string;
@@ -29,7 +32,6 @@ interface OutputRow {
 function newRow(defaults: Partial<OutputRow> = {}): OutputRow {
   return {
     key: Math.random().toString(36).slice(2),
-    consumedQuantity: "",
     producedQuantity: "",
     stage: "",
     medium: "",
@@ -54,8 +56,14 @@ interface TransferDialogProps {
 export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuantity, open, onOpenChange }: TransferDialogProps) {
   const [transferDate, setTransferDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [rows, setRows] = useState<OutputRow[]>([newRow()]);
+  // Operation-level and blank by default: taking tissue from a container
+  // doesn't destroy it, so the lab normally keeps every container back and
+  // nothing is consumed. A number here means that many were used up across
+  // the whole transfer, not per output row.
+  const [consumedQuantity, setConsumedQuantity] = useState("");
   const [closeOutSource, setCloseOutSource] = useState(false);
-  const [closeOutReason, setCloseOutReason] = useState("");
+  const [closeOutReason, setCloseOutReason] = useState(DEFAULT_CLOSE_OUT_REASON);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -65,8 +73,27 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
   const { data: locationOptions } = useOptions("location");
   const { data: discardReasonOptions } = useOptions("discard_reason");
 
-  const totalConsumed = rows.reduce((sum, r) => sum + (Number(r.consumedQuantity) || 0), 0);
-  const remainderAfterOutputs = maxQuantity - totalConsumed;
+  const consumed = consumedQuantity === "" ? 0 : Number(consumedQuantity);
+  const remainderAfterConsumption = maxQuantity - consumed;
+
+  const errors: string[] = [];
+  if (!transferDate) errors.push("Transfer date is required.");
+  rows.forEach((r, idx) => {
+    if (!(Number(r.producedQuantity) > 0)) errors.push(`Output ${idx + 1} needs a positive number of containers created.`);
+    if (!r.stage) errors.push(`Output ${idx + 1} needs a stage.`);
+    if (!r.location) errors.push(`Output ${idx + 1} needs a location.`);
+  });
+  if (consumedQuantity !== "" && (!Number.isInteger(consumed) || consumed < 0)) {
+    errors.push("Containers used up must be zero or a positive whole number.");
+  } else if (consumed > maxQuantity) {
+    errors.push(`Cannot use up ${consumed} containers — only ${maxQuantity} available in this batch.`);
+  }
+  if (closeOutSource) {
+    if (remainderAfterConsumption <= 0) errors.push("There would be nothing left in the source batch to close out.");
+    if (!closeOutReason) errors.push("Choose a reason for closing out the source.");
+  }
+
+  const canSubmit = errors.length === 0;
 
   const transfer = useMutation({
     mutationFn: () =>
@@ -75,7 +102,6 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
         body: JSON.stringify({
           transferDate,
           outputs: rows.map((r) => ({
-            consumedQuantity: Number(r.consumedQuantity),
             producedQuantity: Number(r.producedQuantity),
             stage: r.stage,
             medium: r.medium || undefined,
@@ -85,6 +111,7 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
             appearedCleanAtTransfer: r.isRescue ? undefined : r.appearedCleanAtTransfer,
             isRescue: r.isRescue || undefined,
           })),
+          consumedQuantity: consumedQuantity === "" ? undefined : consumed,
           closeOutSource: closeOutSource ? { reason: closeOutReason } : undefined,
         }),
       }),
@@ -99,8 +126,10 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       toast({ title: "Transfer recorded" });
       setRows([newRow()]);
+      setConsumedQuantity("");
       setCloseOutSource(false);
-      setCloseOutReason("");
+      setCloseOutReason(DEFAULT_CLOSE_OUT_REASON);
+      setSubmitAttempted(false);
       onOpenChange(false);
     },
     onError: (error) => {
@@ -116,40 +145,47 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
     setRows((prev) => (prev.length > 1 ? prev.filter((r) => r.key !== key) : prev));
   }
 
-  const rowsValid = rows.every(
-    (r) => Number(r.consumedQuantity) > 0 && Number(r.producedQuantity) > 0 && r.stage.length > 0 && r.location.length > 0,
-  );
-  const canSubmit =
-    rowsValid &&
-    totalConsumed > 0 &&
-    totalConsumed <= maxQuantity &&
-    (!closeOutSource || (remainderAfterOutputs > 0 && closeOutReason.length > 0));
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Transfer from {sourceSubcode}</DialogTitle>
-          <DialogDescription>{maxQuantity} containers available in this batch.</DialogDescription>
+          <DialogDescription>
+            {maxQuantity} container{maxQuantity === 1 ? "" : "s"} available. Containers are kept back by default — only
+            fill in "containers used up" if some were actually consumed.
+          </DialogDescription>
         </DialogHeader>
 
         <form
           onSubmit={(e) => {
             e.preventDefault();
+            setSubmitAttempted(true);
             if (canSubmit) transfer.mutate();
           }}
           className="space-y-4"
         >
-          <div className="space-y-2">
-            <Label htmlFor="transfer-date">Transfer date</Label>
-            <Input
-              id="transfer-date"
-              type="date"
-              value={transferDate}
-              onChange={(e) => setTransferDate(e.target.value)}
-              required
-              className="w-48"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="transfer-date">Transfer date</Label>
+              <Input
+                id="transfer-date"
+                type="date"
+                value={transferDate}
+                onChange={(e) => setTransferDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="consumed-quantity">Containers used up (optional)</Label>
+              <Input
+                id="consumed-quantity"
+                type="number"
+                min={0}
+                placeholder="Blank — none used"
+                value={consumedQuantity}
+                onChange={(e) => setConsumedQuantity(e.target.value)}
+                data-testid="input-consumed-quantity"
+              />
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -166,30 +202,15 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <Label>Containers used (from source)</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={row.consumedQuantity}
-                      onChange={(e) => updateRow(row.key, { consumedQuantity: e.target.value })}
-                      required
-                      data-testid={`input-consumed-${idx}`}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
                     <Label>New containers created</Label>
                     <Input
                       type="number"
                       min={1}
                       value={row.producedQuantity}
                       onChange={(e) => updateRow(row.key, { producedQuantity: e.target.value })}
-                      required
                       data-testid={`input-produced-${idx}`}
                     />
                   </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Stage</Label>
                     <Select value={row.stage} onValueChange={(v) => updateRow(row.key, { stage: v })}>
@@ -205,6 +226,9 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Location</Label>
                     <Select value={row.location} onValueChange={(v) => updateRow(row.key, { location: v })}>
@@ -220,9 +244,6 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
                       </SelectContent>
                     </Select>
                   </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Medium (optional)</Label>
                     <Select value={row.medium} onValueChange={(v) => updateRow(row.key, { medium: v })}>
@@ -238,21 +259,22 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label>Container type (optional)</Label>
-                    <Select value={row.containerType} onValueChange={(v) => updateRow(row.key, { containerType: v })}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Same as source" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(containerOptions ?? []).map((o: { id: number; label: string }) => (
-                          <SelectItem key={o.id} value={o.label}>
-                            {o.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Container type (optional)</Label>
+                  <Select value={row.containerType} onValueChange={(v) => updateRow(row.key, { containerType: v })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Same as source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(containerOptions ?? []).map((o: { id: number; label: string }) => (
+                        <SelectItem key={o.id} value={o.label}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 {/* Rescue toggle is mutually exclusive with the clean-at-transfer
@@ -313,8 +335,8 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
                 data-testid="checkbox-close-out-source"
               />
               <span className="text-sm">
-                Close out {sourceSubcode} — discard the {Math.max(remainderAfterOutputs, 0)} remaining container
-                {remainderAfterOutputs === 1 ? "" : "s"}
+                Close out {sourceSubcode} — discard the {Math.max(remainderAfterConsumption, 0)} remaining container
+                {remainderAfterConsumption === 1 ? "" : "s"}
               </span>
             </label>
             {closeOutSource && (
@@ -332,15 +354,23 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
                     ))}
                   </SelectContent>
                 </Select>
-                {remainderAfterOutputs <= 0 && (
-                  <p className="text-xs text-destructive">There would be nothing left to close out.</p>
-                )}
               </div>
             )}
           </div>
 
+          {submitAttempted && errors.length > 0 && (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/5 p-3">
+              <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+              <ul className="text-sm text-destructive space-y-0.5" data-testid="transfer-validation-errors">
+                {errors.map((e) => (
+                  <li key={e}>{e}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <DialogFooter>
-            <Button type="submit" disabled={!canSubmit || transfer.isPending} data-testid="button-submit-transfer">
+            <Button type="submit" disabled={transfer.isPending} data-testid="button-submit-transfer">
               {transfer.isPending ? "Recording…" : "Record transfer"}
             </Button>
           </DialogFooter>
