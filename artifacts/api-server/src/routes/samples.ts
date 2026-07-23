@@ -8,7 +8,7 @@ import {
   strainsTable,
   computedQuantitySql,
 } from "@workspace/db";
-import { eq, and, or, ilike, sql } from "drizzle-orm";
+import { eq, and, or, ilike, sql, asc } from "drizzle-orm";
 import { requireAdmin } from "../lib/auth";
 import { buildSampleCode, nextSerial } from "../lib/sampleCode";
 import { nextSubcode } from "../lib/subcode";
@@ -176,7 +176,12 @@ router.get("/samples/:id/batches", async (req, res) => {
       createdAt: batchesTable.createdAt,
     })
     .from(batchesTable)
-    .where(eq(batchesTable.sampleId, id));
+    .where(eq(batchesTable.sampleId, id))
+    // By transfer date, not subcode: subcode is an entry-order identifier
+    // fixed at creation (it's printed on physical labware), not a
+    // chronological one, so a backdated or late-entered batch can carry a
+    // lower subcode with a later date than a higher one.
+    .orderBy(asc(batchesTable.transferDate), asc(batchesTable.subcode));
   res.json(batches);
 });
 

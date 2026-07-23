@@ -234,10 +234,18 @@ router.get("/batches/:id/lineage-tree", async (req, res) => {
     }
   }
 
+  // Sorted by transfer date, not left in Set/insertion order: subcode is an
+  // entry-order identifier (fixed once assigned, printed on physical
+  // labware), not a chronological one, so a batch entered out of sequence
+  // — backdated, or just logged a few days late — would otherwise appear
+  // out of the order it actually happened in.
+  const byTransferDate = (a: { transferDate: string; subcode: string }, b: { transferDate: string; subcode: string }) =>
+    a.transferDate.localeCompare(b.transferDate) || a.subcode.localeCompare(b.subcode);
+
   res.json({
-    ancestors: [...ancestorIds].map((bid) => batchesById.get(bid)!),
-    siblings: [...siblingIds].map((bid) => batchesById.get(bid)!),
-    descendants: [...descendantIds].map((bid) => batchesById.get(bid)!),
+    ancestors: [...ancestorIds].map((bid) => batchesById.get(bid)!).sort(byTransferDate),
+    siblings: [...siblingIds].map((bid) => batchesById.get(bid)!).sort(byTransferDate),
+    descendants: [...descendantIds].map((bid) => batchesById.get(bid)!).sort(byTransferDate),
   });
 });
 
@@ -326,6 +334,40 @@ router.patch("/batches/:id", async (req, res) => {
     return;
   }
 
+  if (body.transferDate !== undefined) {
+    const newDateStr = body.transferDate.toISOString().split("T")[0];
+    // The invariant (child.transferDate >= parent.transferDate) is enforced
+    // at creation time in the subculture route; this closes the same gap
+    // from the edit side, in both directions, since editing either a
+    // parent's or a child's date after the fact could otherwise reintroduce
+    // it.
+    const parentRows = await db
+      .select({ subcode: batchesTable.subcode, transferDate: batchesTable.transferDate })
+      .from(batchLineageTable)
+      .innerJoin(batchesTable, eq(batchesTable.id, batchLineageTable.parentBatchId))
+      .where(eq(batchLineageTable.childBatchId, id));
+    const violatingParent = parentRows.find((p) => newDateStr < p.transferDate);
+    if (violatingParent) {
+      res.status(400).json({
+        error: `Transfer date (${newDateStr}) cannot precede parent batch -${violatingParent.subcode}'s transfer date (${violatingParent.transferDate})`,
+      });
+      return;
+    }
+
+    const childRows = await db
+      .select({ subcode: batchesTable.subcode, transferDate: batchesTable.transferDate })
+      .from(batchLineageTable)
+      .innerJoin(batchesTable, eq(batchesTable.id, batchLineageTable.childBatchId))
+      .where(eq(batchLineageTable.parentBatchId, id));
+    const violatingChild = childRows.find((c) => newDateStr > c.transferDate);
+    if (violatingChild) {
+      res.status(400).json({
+        error: `Transfer date (${newDateStr}) cannot come after child batch -${violatingChild.subcode}'s transfer date (${violatingChild.transferDate})`,
+      });
+      return;
+    }
+  }
+
   const updates: Partial<typeof batchesTable.$inferInsert> = {};
   if (body.stage !== undefined) updates.stage = body.stage;
   if (body.medium !== undefined) updates.medium = body.medium;
@@ -391,6 +433,14 @@ router.post("/batches/:id/subculture", async (req, res) => {
     return;
   }
 
+  const transferDateStr = body.transferDate.toISOString().split("T")[0];
+  if (transferDateStr < source.transferDate) {
+    res.status(400).json({
+      error: `Transfer date (${transferDateStr}) cannot precede the source batch's own transfer date (${source.transferDate})`,
+    });
+    return;
+  }
+
   const consumed = body.consumedQuantity ?? 0;
   const [{ computedQuantity }] = await db
     .select({ computedQuantity: computedQuantitySql() })
@@ -407,8 +457,6 @@ router.post("/batches/:id/subculture", async (req, res) => {
     res.status(400).json({ error: "There would be nothing left in the source batch to close out" });
     return;
   }
-
-  const transferDateStr = body.transferDate.toISOString().split("T")[0];
 
   const { children, closedOutEvent } = await db.transaction(async (tx) => {
     const created = [];
