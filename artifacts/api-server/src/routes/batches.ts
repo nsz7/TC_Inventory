@@ -234,10 +234,18 @@ router.get("/batches/:id/lineage-tree", async (req, res) => {
     }
   }
 
+  // Sorted by transfer date, not left in Set/insertion order: subcode is an
+  // entry-order identifier (fixed once assigned, printed on physical
+  // labware), not a chronological one, so a batch entered out of sequence
+  // — backdated, or just logged a few days late — would otherwise appear
+  // out of the order it actually happened in.
+  const byTransferDate = (a: { transferDate: string; subcode: string }, b: { transferDate: string; subcode: string }) =>
+    a.transferDate.localeCompare(b.transferDate) || a.subcode.localeCompare(b.subcode);
+
   res.json({
-    ancestors: [...ancestorIds].map((bid) => batchesById.get(bid)!),
-    siblings: [...siblingIds].map((bid) => batchesById.get(bid)!),
-    descendants: [...descendantIds].map((bid) => batchesById.get(bid)!),
+    ancestors: [...ancestorIds].map((bid) => batchesById.get(bid)!).sort(byTransferDate),
+    siblings: [...siblingIds].map((bid) => batchesById.get(bid)!).sort(byTransferDate),
+    descendants: [...descendantIds].map((bid) => batchesById.get(bid)!).sort(byTransferDate),
   });
 });
 

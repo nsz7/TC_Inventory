@@ -166,6 +166,19 @@ function TimelineRow({ entry }: { entry: TimelineEntry }) {
   );
 }
 
+// The API sorts ancestors/siblings/descendants by transfer date (not
+// subcode — see the comment on that sort in routes/batches.ts), so the date
+// needs to be visible here too, or a lower subcode appearing below a higher
+// one just looks like a bug.
+function LineageBatchLink({ batch }: { batch: Batch }) {
+  return (
+    <Link href={`/batches/${batch.id}`} className="block hover:underline">
+      <span className="font-mono text-primary">{batch.subcode}</span>{" "}
+      <span className="text-muted-foreground text-xs">{format(parseLocalDate(batch.transferDate), "MMM d, yyyy")}</span>
+    </Link>
+  );
+}
+
 export default function BatchDetail() {
   const params = useParams();
   const [, navigate] = useLocation();
@@ -318,11 +331,7 @@ export default function BatchDetail() {
                 {(lineageTree?.ancestors ?? []).length === 0 ? (
                   <p className="text-muted-foreground">None — initiation batch</p>
                 ) : (
-                  lineageTree!.ancestors.map((b) => (
-                    <Link key={b.id} href={`/batches/${b.id}`} className="block font-mono text-primary hover:underline">
-                      {b.subcode}
-                    </Link>
-                  ))
+                  lineageTree!.ancestors.map((b) => <LineageBatchLink key={b.id} batch={b} />)
                 )}
               </div>
               <div>
@@ -330,11 +339,7 @@ export default function BatchDetail() {
                 {(lineageTree?.siblings ?? []).length === 0 ? (
                   <p className="text-muted-foreground">None</p>
                 ) : (
-                  lineageTree!.siblings.map((b) => (
-                    <Link key={b.id} href={`/batches/${b.id}`} className="block font-mono text-primary hover:underline">
-                      {b.subcode}
-                    </Link>
-                  ))
+                  lineageTree!.siblings.map((b) => <LineageBatchLink key={b.id} batch={b} />)
                 )}
               </div>
               <div>
@@ -342,11 +347,7 @@ export default function BatchDetail() {
                 {(lineageTree?.descendants ?? []).length === 0 ? (
                   <p className="text-muted-foreground">None yet</p>
                 ) : (
-                  lineageTree!.descendants.map((b) => (
-                    <Link key={b.id} href={`/batches/${b.id}`} className="block font-mono text-primary hover:underline">
-                      {b.subcode}
-                    </Link>
-                  ))
+                  lineageTree!.descendants.map((b) => <LineageBatchLink key={b.id} batch={b} />)
                 )}
               </div>
             </div>

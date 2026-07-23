@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
+import { format } from "date-fns";
 import { apiFetch } from "@/lib/api";
+import { parseLocalDate } from "@/lib/dates";
 import { useOptions } from "@/hooks/use-options";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -42,6 +44,7 @@ interface BatchRow {
   sampleCode: string;
   subcode: string;
   stage: string;
+  transferDate: string;
   location: string;
   containerType: string | null;
   notes: string | null;
@@ -257,7 +260,15 @@ export default function SamplesList() {
     for (const b of batches ?? []) {
       map.set(b.sampleId, [...(map.get(b.sampleId) ?? []), b]);
     }
-    for (const list of map.values()) list.sort((a, b) => a.subcode.localeCompare(b.subcode));
+    // Sorted by transfer date, not subcode: subcode reflects entry order
+    // (fixed once assigned — it's printed on physical labware), not event
+    // order, so a backdated or out-of-sequence entry can leave a lower
+    // subcode with a later date than a higher one. Date order is what a
+    // tech scanning a sample's batches actually wants. Ties fall back to
+    // subcode for a stable order.
+    for (const list of map.values()) {
+      list.sort((a, b) => a.transferDate.localeCompare(b.transferDate) || a.subcode.localeCompare(b.subcode));
+    }
     return map;
   }, [batches]);
 
@@ -298,7 +309,17 @@ export default function SamplesList() {
         }
         return true;
       })
-      .sort((a, b) => `${a.sampleCode}-${a.subcode}`.localeCompare(`${b.sampleCode}-${b.subcode}`));
+      // Grouped by sample, then by transfer date within a sample — not by
+      // subcode. See the comment on batchesBySample's sort: subcode is an
+      // entry-order identifier fixed at creation (it's on physical
+      // labware), not a chronological sequence, so sorting by it here would
+      // show batches out of the order they actually happened in.
+      .sort(
+        (a, b) =>
+          a.sampleCode.localeCompare(b.sampleCode) ||
+          a.transferDate.localeCompare(b.transferDate) ||
+          a.subcode.localeCompare(b.subcode),
+      );
   }, [batches, sampleById, search, hideArchived, stageFilter, hideZeroVessels]);
 
   function toggleExpand(id: number) {
@@ -490,7 +511,9 @@ export default function SamplesList() {
                                 {batch.hadContamination && <HadContaminationMark />}
                                 {batch.contaminationAlert && <ContaminationAlertMark />}
                               </div>
-                              <div className="text-[11px] text-muted-foreground mt-0.5">{batch.location}</div>
+                              <div className="text-[11px] text-muted-foreground mt-0.5">
+                                {batch.location} · {format(parseLocalDate(batch.transferDate), "MMM d, yyyy")}
+                              </div>
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground">—</TableCell>
                             {stages.map((stage) => (
@@ -526,6 +549,7 @@ export default function SamplesList() {
                   <TableHead>Code</TableHead>
                   <TableHead>Variety</TableHead>
                   <TableHead className="capitalize">Stage</TableHead>
+                  <TableHead>Transfer date</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Container</TableHead>
                   <TableHead className="text-center">Vessels</TableHead>
@@ -555,6 +579,9 @@ export default function SamplesList() {
                         {sample?.strainLabel && <span className="text-muted-foreground"> · {sample.strainLabel}</span>}
                       </TableCell>
                       <TableCell className="text-sm capitalize">{batch.stage}</TableCell>
+                      <TableCell className="text-sm whitespace-nowrap">
+                        {format(parseLocalDate(batch.transferDate), "MMM d, yyyy")}
+                      </TableCell>
                       <TableCell className="text-sm">{batch.location}</TableCell>
                       <TableCell className="text-sm">{batch.containerType ?? "—"}</TableCell>
                       <TableCell className="text-center">
@@ -588,6 +615,7 @@ export default function SamplesList() {
                   <TableHead>Code</TableHead>
                   <TableHead>Variety</TableHead>
                   <TableHead className="capitalize">Stage</TableHead>
+                  <TableHead>Transfer date</TableHead>
                   <TableHead className="text-center">Vessels</TableHead>
                   <TableHead>Next date</TableHead>
                   <TableHead>Notes</TableHead>
@@ -612,6 +640,9 @@ export default function SamplesList() {
                         {sample?.strainLabel && <span className="text-muted-foreground"> · {sample.strainLabel}</span>}
                       </TableCell>
                       <TableCell className="text-sm capitalize">{batch.stage}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {format(parseLocalDate(batch.transferDate), "MMM d, yyyy")}
+                      </TableCell>
                       <TableCell className="text-center">
                         <VesselsEditCell
                           batch={batch}

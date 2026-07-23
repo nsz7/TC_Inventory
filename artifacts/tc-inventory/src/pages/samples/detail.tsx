@@ -1,6 +1,8 @@
 import { useParams, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { format } from "date-fns";
 import { apiFetch } from "@/lib/api";
+import { parseLocalDate } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,6 +26,7 @@ interface Batch {
   id: number;
   subcode: string;
   stage: string;
+  transferDate: string;
   location: string;
   computedQuantity: string;
   contaminationAlert: boolean;
@@ -111,11 +114,16 @@ export default function SampleDetail() {
                 <TableRow>
                   <TableHead>Subcode</TableHead>
                   <TableHead>Stage</TableHead>
+                  <TableHead>Transfer date</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead className="text-right">Count</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {/* Rows arrive pre-sorted by transfer date from the API, not
+                    by subcode — see the comment on that ordering in
+                    routes/samples.ts. The date is shown here so that order
+                    is legible rather than looking like a display bug. */}
                 {visibleBatches.map((batch) => (
                   <TableRow key={batch.id} className="cursor-pointer hover:bg-muted/50" data-testid={`batch-row-${batch.subcode}`}>
                     <TableCell>
@@ -126,6 +134,9 @@ export default function SampleDetail() {
                       {batch.hadContamination && <History className="inline h-3.5 w-3.5 text-muted-foreground ml-1.5" />}
                     </TableCell>
                     <TableCell className="capitalize text-sm">{batch.stage}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                      {format(parseLocalDate(batch.transferDate), "MMM d, yyyy")}
+                    </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{batch.location}</TableCell>
                     <TableCell className="text-right tabular-nums text-sm">{batch.computedQuantity}</TableCell>
                   </TableRow>
