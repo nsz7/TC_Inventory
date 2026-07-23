@@ -262,15 +262,31 @@ async function poolBatches(
     })
     .returning();
 
+  // Pooling is a subculture too — tissue was taken from each parent to make
+  // this one child — so it gets the same "subculture" record every other
+  // transfer does. Unlike the one-source-many-children split, a pooled
+  // batch's consumption event can still name its target unambiguously
+  // (there's exactly one child), so it keeps target_batch_id rather than
+  // going through the targetless operation-level event.
   for (const p of parents) {
     await db.insert(containerEventsTable).values({
       batchId: p.batch.id,
-      eventType: "transfer_out",
-      quantity: p.consumedQuantity,
+      eventType: "subculture",
+      quantity: 0,
       targetBatchId: child.id,
       eventDate: fields.transferDate,
       createdBy,
     });
+    if (p.consumedQuantity > 0) {
+      await db.insert(containerEventsTable).values({
+        batchId: p.batch.id,
+        eventType: "transfer_out",
+        quantity: p.consumedQuantity,
+        targetBatchId: child.id,
+        eventDate: fields.transferDate,
+        createdBy,
+      });
+    }
   }
   await db.insert(batchLineageTable).values(parents.map((p) => ({ childBatchId: child.id, parentBatchId: p.batch.id })));
   return child;
@@ -454,7 +470,7 @@ async function main() {
   const sample3 = await createSample("FA", cavendish.id, cavendishStandard.id, by);
   const s3b1 = await createInitiationBatch(
     sample3.id,
-    { stage: "initiation", transferDate: "2026-01-20", medium: "MS", containerType: "magenta box", location: "Shelf C-1", initialQuantity: 10 },
+    { stage: "initiation", transferDate: "2025-04-01", medium: "MS", containerType: "magenta box", location: "Shelf C-1", initialQuantity: 10 },
     by,
   );
   const s3b2 = await subculture(
