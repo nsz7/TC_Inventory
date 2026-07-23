@@ -27,6 +27,9 @@ export const batchesTable = pgTable(
     cleanTransferCount: integer("clean_transfer_count").notNull().default(0),
     hadContamination: boolean("had_contamination").notNull().default(false),
     notes: text("notes"),
+    // Overrides the computed due date (transferDate + interval) for this one
+    // batch. No separate "why overridden" field — notes covers it.
+    dueDateOverride: date("due_date_override"),
     createdBy: integer("created_by").references(() => usersTable.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedBy: integer("updated_by").references(() => usersTable.id),

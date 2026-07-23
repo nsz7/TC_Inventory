@@ -12,8 +12,6 @@ tags:
     description: Health operations
   - name: samples
     description: Tissue culture sample management
-  - name: transfers
-    description: Sample transfer records
   - name: dashboard
     description: Dashboard summary and analytics
 
@@ -182,85 +180,6 @@ paths:
                 $ref: "#/components/schemas/SubcultureResult"
         "404":
           description: Sample not found
-
-  /samples/{id}/transfers:
-    get:
-      operationId: getSampleTransfers
-      tags: [samples]
-      summary: Get transfer history for a sample
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Transfer records for this sample
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Transfer"
-
-  /transfers:
-    get:
-      operationId: listTransfers
-      tags: [transfers]
-      summary: List all transfers
-      parameters:
-        - name: sampleId
-          in: query
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: List of transfers
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Transfer"
-    post:
-      operationId: createTransfer
-      tags: [transfers]
-      summary: Record a new transfer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/TransferInput"
-      responses:
-        "201":
-          description: Created transfer record
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Transfer"
-
-  /transfers/{id}:
-    get:
-      operationId: getTransfer
-      tags: [transfers]
-      summary: Get a transfer record by ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Transfer record
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Transfer"
-        "404":
-          description: Not found
 
   /schedule:
     get:

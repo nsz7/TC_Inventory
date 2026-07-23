@@ -10,6 +10,7 @@ import {
   containerEventsTable,
   batchLineageTable,
   changeLogTable,
+  appSettingsTable,
   computedQuantitySql,
 } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
@@ -19,6 +20,7 @@ import { nextSubcode } from "../lib/subcode";
 import { computeInheritedContamination, RESCUE_CONTAMINATION_STATE, markHadContamination } from "../lib/contamination";
 import { recordDiscard } from "../lib/discard";
 import { recordChanges } from "../lib/changeLog";
+import { computeDueDate } from "../lib/dueDate";
 
 const router = Router();
 
@@ -38,10 +40,24 @@ function batchRow() {
     cleanTransferCount: batchesTable.cleanTransferCount,
     hadContamination: batchesTable.hadContamination,
     notes: batchesTable.notes,
+    dueDateOverride: batchesTable.dueDateOverride,
     voided: batchesTable.voided,
     voidedReason: batchesTable.voidedReason,
     createdAt: batchesTable.createdAt,
   };
+}
+
+/** Global settings and every strain's renewal override, fetched once and
+ * reused across all rows being computed in one request rather than
+ * per-row. */
+async function loadDueDateInputs() {
+  const [settings] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.id, 1));
+  const strainOverrides = await db
+    .select({ id: strainsTable.id, storageRenewalIntervalMonthsOverride: strainsTable.storageRenewalIntervalMonthsOverride })
+    .from(strainsTable);
+  const overrideByStrainId = new Map(strainOverrides.map((s) => [s.id, s.storageRenewalIntervalMonthsOverride]));
+  const globalMonths = settings?.defaultStorageRenewalIntervalMonths ?? 6;
+  return { overrideByStrainId, globalMonths };
 }
 
 async function loadBatchOr404(id: number, res: import("express").Response) {
@@ -66,34 +82,50 @@ router.get("/batches", async (req, res) => {
   const conditions = [];
   if (!query.includeVoided) conditions.push(eq(batchesTable.voided, false));
 
-  const batches = await db
-    .select({ ...batchRow(), sampleCode: samplesTable.sampleCode })
-    .from(batchesTable)
-    .innerJoin(samplesTable, eq(samplesTable.id, batchesTable.sampleId))
-    .where(conditions.length > 0 ? and(...conditions) : undefined);
-  res.json(batches);
+  const [batches, { overrideByStrainId, globalMonths }] = await Promise.all([
+    db
+      .select({ ...batchRow(), sampleCode: samplesTable.sampleCode, strainId: samplesTable.strainId })
+      .from(batchesTable)
+      .innerJoin(samplesTable, eq(samplesTable.id, batchesTable.sampleId))
+      .where(conditions.length > 0 ? and(...conditions) : undefined),
+    loadDueDateInputs(),
+  ]);
+
+  res.json(
+    batches.map((b) => ({
+      ...b,
+      computedDueDate: computeDueDate(b, b.strainId ? overrideByStrainId.get(b.strainId) : null, globalMonths),
+    })),
+  );
 });
 
 router.get("/batches/:id", async (req, res) => {
   const id = z.coerce.number().parse(req.params.id);
-  const [batch] = await db
-    .select({
-      ...batchRow(),
-      sampleCode: samplesTable.sampleCode,
-      varietyLabel: varietiesTable.label,
-      strainLabel: strainsTable.label,
-      sampleArchived: samplesTable.archived,
-    })
-    .from(batchesTable)
-    .innerJoin(samplesTable, eq(samplesTable.id, batchesTable.sampleId))
-    .leftJoin(varietiesTable, eq(varietiesTable.id, samplesTable.varietyId))
-    .leftJoin(strainsTable, eq(strainsTable.id, samplesTable.strainId))
-    .where(eq(batchesTable.id, id));
+  const [[batch], { overrideByStrainId, globalMonths }] = await Promise.all([
+    db
+      .select({
+        ...batchRow(),
+        sampleCode: samplesTable.sampleCode,
+        varietyLabel: varietiesTable.label,
+        strainLabel: strainsTable.label,
+        strainId: samplesTable.strainId,
+        sampleArchived: samplesTable.archived,
+      })
+      .from(batchesTable)
+      .innerJoin(samplesTable, eq(samplesTable.id, batchesTable.sampleId))
+      .leftJoin(varietiesTable, eq(varietiesTable.id, samplesTable.varietyId))
+      .leftJoin(strainsTable, eq(strainsTable.id, samplesTable.strainId))
+      .where(eq(batchesTable.id, id)),
+    loadDueDateInputs(),
+  ]);
   if (!batch) {
     res.status(404).json({ error: "Batch not found" });
     return;
   }
-  res.json(batch);
+  res.json({
+    ...batch,
+    computedDueDate: computeDueDate(batch, batch.strainId ? overrideByStrainId.get(batch.strainId) : null, globalMonths),
+  });
 });
 
 router.get("/batches/:id/events", async (req, res) => {
@@ -262,8 +294,61 @@ router.get("/batches/:id/timeline", async (req, res) => {
   res.json(timeline);
 });
 
+const UpdateBatchBody = z.object({
+  stage: z.string().min(1).optional(),
+  medium: z.string().nullish(),
+  containerType: z.string().nullish(),
+  location: z.string().min(1).optional(),
+  transferDate: z.coerce.date().optional(),
+  notes: z.string().nullish(),
+  // Explicit null clears the override (falls back to the computed default);
+  // omitted leaves it untouched.
+  dueDateOverride: z.coerce.date().nullish(),
+});
+
+/**
+ * Full field editing lives here, not the samples-table Edit view — that's a
+ * quick shelf-side tool for vessel counts only. Never touches quantity;
+ * that's exclusively discard/correction events (see recordDiscard and the
+ * correction route).
+ */
+router.patch("/batches/:id", async (req, res) => {
+  const id = z.coerce.number().parse(req.params.id);
+  const body = UpdateBatchBody.parse(req.body);
+
+  const [before] = await db.select().from(batchesTable).where(eq(batchesTable.id, id));
+  if (!before) {
+    res.status(404).json({ error: "Batch not found" });
+    return;
+  }
+  if (before.voided) {
+    res.status(400).json({ error: "Cannot edit a voided batch" });
+    return;
+  }
+
+  const updates: Partial<typeof batchesTable.$inferInsert> = {};
+  if (body.stage !== undefined) updates.stage = body.stage;
+  if (body.medium !== undefined) updates.medium = body.medium;
+  if (body.containerType !== undefined) updates.containerType = body.containerType;
+  if (body.location !== undefined) updates.location = body.location;
+  if (body.transferDate !== undefined) updates.transferDate = body.transferDate.toISOString().split("T")[0];
+  if (body.notes !== undefined) updates.notes = body.notes;
+  if (body.dueDateOverride !== undefined) {
+    updates.dueDateOverride = body.dueDateOverride ? body.dueDateOverride.toISOString().split("T")[0] : null;
+  }
+
+  const [after] = await db
+    .update(batchesTable)
+    .set({ ...updates, updatedBy: req.currentUser!.id, updatedAt: new Date() })
+    .where(eq(batchesTable.id, id))
+    .returning();
+
+  await recordChanges("batch", id, before, after, req.currentUser!.id);
+
+  res.json(after);
+});
+
 const SubcultureOutput = z.object({
-  consumedQuantity: z.number().int().positive(),
   producedQuantity: z.number().int().positive(),
   stage: z.string().min(1),
   medium: z.string().nullish(),
@@ -281,6 +366,13 @@ const SubcultureOutput = z.object({
 const SubcultureBody = z.object({
   transferDate: z.coerce.date(),
   outputs: z.array(SubcultureOutput).min(1),
+  // Operation-level, applies once to the whole transfer rather than per
+  // output row: taking tissue from a container doesn't destroy it, so most
+  // transfers consume nothing. Blank/omitted means the source is unchanged
+  // and no consuming event is written at all — see the event-writing loop
+  // below for why a "subculture" record is still written per output
+  // regardless.
+  consumedQuantity: z.number().int().nonnegative().optional(),
   // The transfer dialog's "close out source" checkbox and the standalone
   // discard action are one mechanism (see recordDiscard) reached from two
   // places. Requiring a reason here mirrors the standalone action's
@@ -299,19 +391,19 @@ router.post("/batches/:id/subculture", async (req, res) => {
     return;
   }
 
+  const consumed = body.consumedQuantity ?? 0;
   const [{ computedQuantity }] = await db
     .select({ computedQuantity: computedQuantitySql() })
     .from(batchesTable)
     .where(eq(batchesTable.id, id));
-  const totalConsumed = body.outputs.reduce((sum, o) => sum + o.consumedQuantity, 0);
-  if (totalConsumed > Number(computedQuantity)) {
+  if (consumed > Number(computedQuantity)) {
     res.status(400).json({
-      error: `Cannot consume ${totalConsumed} containers — only ${computedQuantity} available in this batch`,
+      error: `Cannot consume ${consumed} containers — only ${computedQuantity} available in this batch`,
     });
     return;
   }
-  const remainderAfterOutputs = Number(computedQuantity) - totalConsumed;
-  if (body.closeOutSource && remainderAfterOutputs <= 0) {
+  const remainderAfterConsumption = Number(computedQuantity) - consumed;
+  if (body.closeOutSource && remainderAfterConsumption <= 0) {
     res.status(400).json({ error: "There would be nothing left in the source batch to close out" });
     return;
   }
@@ -348,10 +440,15 @@ router.post("/batches/:id/subculture", async (req, res) => {
         })
         .returning();
 
+      // Records "tissue was taken from this batch to make this child" —
+      // written unconditionally, one row per output, regardless of whether
+      // anything was consumed. Quantity 0 always: this is not a change in
+      // count (see computedQuantity.ts), just the source-side anchor for
+      // the timeline. Lineage-of-record still lives in batch_lineage below.
       await tx.insert(containerEventsTable).values({
         batchId: source.id,
-        eventType: "transfer_out",
-        quantity: output.consumedQuantity,
+        eventType: "subculture",
+        quantity: 0,
         targetBatchId: child.id,
         eventDate: transferDateStr,
         createdBy: req.currentUser!.id,
@@ -365,6 +462,20 @@ router.post("/batches/:id/subculture", async (req, res) => {
       created.push(child);
     }
 
+    // The "N containers used up" fact, separate from the per-child
+    // subculture records above. No target_batch_id: consumed containers
+    // didn't collectively land in one place, so unlike the per-child
+    // records this has nothing to point at.
+    if (consumed > 0) {
+      await tx.insert(containerEventsTable).values({
+        batchId: source.id,
+        eventType: "transfer_out",
+        quantity: consumed,
+        eventDate: transferDateStr,
+        createdBy: req.currentUser!.id,
+      });
+    }
+
     if (anyRescue) {
       await markHadContamination(tx, source.id, req.currentUser!.id);
     }
@@ -373,7 +484,7 @@ router.post("/batches/:id/subculture", async (req, res) => {
     if (body.closeOutSource) {
       closedOutEvent = await recordDiscard(tx, {
         batchId: source.id,
-        quantity: remainderAfterOutputs,
+        quantity: remainderAfterConsumption,
         reason: body.closeOutSource.reason,
         eventDate: transferDateStr,
         userId: req.currentUser!.id,
@@ -547,19 +658,42 @@ router.post("/batches/:id/unvoid", requireAdmin, async (req, res) => {
   res.json(batch);
 });
 
+/**
+ * Voiding an event that points at a target_batch_id (a subculture record,
+ * or a legacy transfer_out written before this fix) would hide the "this
+ * child was created" fact from the source's timeline while batch_lineage
+ * and the child batch itself still say it happened — Lineage and the
+ * timeline would then disagree with no way to tell which is right. Blocked
+ * unless the target batch has itself been voided first, at which point the
+ * ordering is unambiguous: the child was undone, so the record of its
+ * creation can be undone too.
+ */
 router.post("/container-events/:id/void", requireAdmin, async (req, res) => {
   const id = z.coerce.number().parse(req.params.id);
   const body = z.object({ reason: z.string().min(1) }).parse(req.body);
-  const [event] = await db
-    .update(containerEventsTable)
-    .set({ voided: true, voidedBy: req.currentUser!.id, voidedAt: new Date(), voidedReason: body.reason })
-    .where(eq(containerEventsTable.id, id))
-    .returning();
+
+  const [event] = await db.select().from(containerEventsTable).where(eq(containerEventsTable.id, id));
   if (!event) {
     res.status(404).json({ error: "Container event not found" });
     return;
   }
-  res.json(event);
+
+  if (event.targetBatchId) {
+    const [target] = await db.select().from(batchesTable).where(eq(batchesTable.id, event.targetBatchId));
+    if (target && !target.voided) {
+      res.status(400).json({
+        error: `Cannot void this event while its target batch (-${target.subcode}) still exists and isn't voided — void that batch first.`,
+      });
+      return;
+    }
+  }
+
+  const [updated] = await db
+    .update(containerEventsTable)
+    .set({ voided: true, voidedBy: req.currentUser!.id, voidedAt: new Date(), voidedReason: body.reason })
+    .where(eq(containerEventsTable.id, id))
+    .returning();
+  res.json(updated);
 });
 
 router.post("/container-events/:id/unvoid", requireAdmin, async (req, res) => {

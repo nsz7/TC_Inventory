@@ -133,7 +133,7 @@ export default function Dashboard() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-medium">Qty: {event.quantity}</div>
+                      {event.quantity > 0 && <div className="text-sm font-medium">Qty: {event.quantity}</div>}
                     </div>
                   </div>
                 ))
@@ -151,7 +151,7 @@ export default function Dashboard() {
               {summary.byStage.map(stage => (
                 <div key={stage.label} className="flex items-center justify-between">
                   <div className="text-sm font-medium capitalize">{stage.label}</div>
-                  <div className="text-sm text-muted-foreground">{stage.count} samples</div>
+                  <div className="text-sm text-muted-foreground">{stage.count} batch{stage.count === 1 ? "" : "es"}</div>
                 </div>
               ))}
             </div>

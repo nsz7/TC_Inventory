@@ -123,14 +123,26 @@ async function subculture(
     })
     .returning();
 
+  // Mirrors the app's subculture route: a "subculture" record (quantity 0)
+  // anchors the source-side timeline unconditionally, and consumption — if
+  // any — is a separate, targetless transfer_out event.
   await db.insert(containerEventsTable).values({
     batchId: source.id,
-    eventType: "transfer_out",
-    quantity: output.consumedQuantity,
+    eventType: "subculture",
+    quantity: 0,
     targetBatchId: child.id,
     eventDate: output.transferDate,
     createdBy,
   });
+  if (output.consumedQuantity > 0) {
+    await db.insert(containerEventsTable).values({
+      batchId: source.id,
+      eventType: "transfer_out",
+      quantity: output.consumedQuantity,
+      eventDate: output.transferDate,
+      createdBy,
+    });
+  }
   await db.insert(batchLineageTable).values({ childBatchId: child.id, parentBatchId: source.id });
   return child;
 }
@@ -198,12 +210,21 @@ async function rescue(
 
   await db.insert(containerEventsTable).values({
     batchId: source.id,
-    eventType: "transfer_out",
-    quantity: fields.consumedQuantity,
+    eventType: "subculture",
+    quantity: 0,
     targetBatchId: child.id,
     eventDate: fields.transferDate,
     createdBy,
   });
+  if (fields.consumedQuantity > 0) {
+    await db.insert(containerEventsTable).values({
+      batchId: source.id,
+      eventType: "transfer_out",
+      quantity: fields.consumedQuantity,
+      eventDate: fields.transferDate,
+      createdBy,
+    });
+  }
   await db.insert(batchLineageTable).values({ childBatchId: child.id, parentBatchId: source.id });
   await markHadContamination(source.id, createdBy);
   return child;
@@ -263,7 +284,8 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   media: ["MS", "MS + 0.1mg/L BAP", "MS + 1mg/L BAP", "WPM", "B5", "1/2 MS", "MS + glycerol"],
   location: ["Shelf A-1", "Shelf A-2", "Shelf B-1", "Shelf C-1", "Shelf C-2", "Freezer F-1"],
   category_code: ["FA", "BC", "CV"],
-  discard_reason: ["contaminated", "poor growth", "used in experiment", "other"],
+  discard_reason: ["contaminated", "poor growth", "used in experiment", "fully transferred — source retired", "other"],
+  correction_reason: ["miscount", "previously unrecorded", "other"],
   archive_reason: ["line lost", "project ended", "transferred out", "other"],
 };
 
@@ -347,7 +369,12 @@ async function main() {
   const [russet] = await db.insert(varietiesTable).values({ label: "Russet Burbank" }).returning();
   const [desireeWt] = await db.insert(strainsTable).values({ varietyId: desiree.id, label: "WT" }).returning();
   const [desireeTc12] = await db.insert(strainsTable).values({ varietyId: desiree.id, label: "TC-12" }).returning();
-  console.log("Created varieties: Desiree (strains WT, TC-12), Cavendish, Russet Burbank.");
+  // Every variety needs at least one strain — per-strain minimum-stock/renewal
+  // overrides and the aggregation on the variety page have nowhere to attach
+  // otherwise. Varieties the lab doesn't distinguish within get "Standard".
+  const [cavendishStandard] = await db.insert(strainsTable).values({ varietyId: cavendish.id, label: "Standard" }).returning();
+  const [russetStandard] = await db.insert(strainsTable).values({ varietyId: russet.id, label: "Standard" }).returning();
+  console.log("Created varieties: Desiree (strains WT, TC-12), Cavendish (Standard), Russet Burbank (Standard).");
 
   // --- Sample 1: multi-subcode lineage across three stages -----------------
   const sample1 = await createSample("FA", desiree.id, desireeWt.id, by);
@@ -361,12 +388,21 @@ async function main() {
     { consumedQuantity: 5, producedQuantity: 8, stage: "multiplication", transferDate: "2026-02-10", medium: "MS + 0.1mg/L BAP", location: "Shelf A-1" },
     by,
   );
-  await subculture(
+  const s1b3 = await subculture(
     s1b2,
     { consumedQuantity: 3, producedQuantity: 3, stage: "rooting", transferDate: "2026-03-10", medium: "1/2 MS", containerType: "culture tube", location: "Shelf A-2" },
     by,
   );
   console.log(`${sample1.sampleCode}: initiation -> multiplication -> rooting (3 batches).`);
+
+  // A storage batch below the default minimum stock (5) — recent, not overdue,
+  // to demonstrate the low-stock warning independently of storage age.
+  await subculture(
+    s1b3,
+    { consumedQuantity: 1, producedQuantity: 2, stage: "long-term storage", transferDate: "2026-06-01", location: "Freezer F-1" },
+    by,
+  );
+  console.log(`${sample1.sampleCode}: storage batch with only 2 containers (below the default minimum of 5).`);
 
   // --- Sample 2: alert originates from a rescue (never from a discard),
   // clears after 2 consecutive clean transfers, then a later contaminated
@@ -415,7 +451,7 @@ async function main() {
   // --- Sample 3: a second, independent rescue lineage that hasn't cleared
   // yet — includes one non-clean transfer to show the streak resetting to 0
   // rather than clearing, contrasting with sample 2's fully-cleared chain ---
-  const sample3 = await createSample("FA", cavendish.id, null, by);
+  const sample3 = await createSample("FA", cavendish.id, cavendishStandard.id, by);
   const s3b1 = await createInitiationBatch(
     sample3.id,
     { stage: "initiation", transferDate: "2026-01-20", medium: "MS", containerType: "magenta box", location: "Shelf C-1", initialQuantity: 10 },
@@ -455,8 +491,17 @@ async function main() {
     `${sample3.sampleCode}: rescue on ${s3b2.subcode} raised the alert on ${s3b3.subcode}; still active after a reset and one clean transfer.`,
   );
 
+  // A storage batch well past the default 6-month renewal interval — healthy
+  // quantity, to demonstrate storage age overdue independently of low stock.
+  await subculture(
+    s3b1,
+    { consumedQuantity: 2, producedQuantity: 8, stage: "long-term storage", transferDate: "2025-05-01", location: "Freezer F-1" },
+    by,
+  );
+  console.log(`${sample3.sampleCode}: storage batch transferred 2025-05-01 — well overdue for renewal.`);
+
   // --- Sample 4: fully discarded, depleted batch ----------------------------
-  const sample4 = await createSample("FA", russet.id, null, by);
+  const sample4 = await createSample("FA", russet.id, russetStandard.id, by);
   const s4b1 = await createInitiationBatch(
     sample4.id,
     { stage: "initiation", transferDate: "2026-01-05", medium: "MS + glycerol", containerType: "cryovial", location: "Freezer F-1", initialQuantity: 5 },

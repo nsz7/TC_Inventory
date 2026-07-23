@@ -82,7 +82,11 @@ router.get("/samples", async (req, res) => {
 const CreateSampleBody = z.object({
   categoryCode: z.string().length(2).regex(/^[A-Za-z]{2}$/, "Category code must be two letters"),
   varietyId: z.number(),
-  strainId: z.number().nullish(),
+  // Required at creation so per-strain min-stock/renewal overrides and the
+  // variety page's aggregation always have something to attach to — every
+  // variety is seeded with at least one strain (a plain "Standard" one for
+  // varieties the lab doesn't distinguish within) to keep this satisfiable.
+  strainId: z.number(),
   // The initiation batch, created atomically with the sample.
   location: z.string().min(1),
   transferDate: z.coerce.date(),

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
@@ -49,6 +49,15 @@ export default function NewSample() {
   const { data: containerOptions } = useOptions("container");
   const { data: locationOptions } = useOptions("location");
 
+  // Every variety has at least one strain; pre-select it the moment it's the
+  // only option, since most varieties only have "Standard" and shouldn't
+  // force an extra click.
+  useEffect(() => {
+    if (strains && strains.length === 1) {
+      setStrainId(String(strains[0].id));
+    }
+  }, [strains]);
+
   const createSample = useMutation({
     mutationFn: () =>
       apiFetch<{ sample: { id: number }; batch: { id: number } }>("/api/samples", {
@@ -56,7 +65,7 @@ export default function NewSample() {
         body: JSON.stringify({
           categoryCode,
           varietyId: Number(varietyId),
-          strainId: strainId ? Number(strainId) : undefined,
+          strainId: Number(strainId),
           transferDate,
           medium: medium || undefined,
           containerType: containerType || undefined,
@@ -68,6 +77,7 @@ export default function NewSample() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["samples"] });
       queryClient.invalidateQueries({ queryKey: ["batches"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       toast({ title: "Sample created" });
       navigate(`/batches/${result.batch.id}`);
     },
@@ -77,7 +87,12 @@ export default function NewSample() {
   });
 
   const canSubmit =
-    categoryCode.length === 2 && !!varietyId && location.length > 0 && Number(initialQuantity) > 0 && transferDate.length > 0;
+    categoryCode.length === 2 &&
+    !!varietyId &&
+    !!strainId &&
+    location.length > 0 &&
+    Number(initialQuantity) > 0 &&
+    transferDate.length > 0;
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -151,7 +166,7 @@ export default function NewSample() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Strain (optional)</Label>
+                <Label>Strain</Label>
                 <Select value={strainId} onValueChange={setStrainId} disabled={!varietyId}>
                   <SelectTrigger data-testid="select-strain">
                     <SelectValue placeholder={varietyId ? "Select strain" : "Select a variety first"} />

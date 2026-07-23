@@ -3,7 +3,6 @@ import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard,
   TestTube2,
-  ArrowRightLeft,
   CalendarClock,
   BarChart2,
   Settings2,
@@ -18,7 +17,6 @@ import { Button } from "@/components/ui/button";
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/samples", label: "Samples", icon: TestTube2 },
-  { href: "/transfers", label: "Transfers", icon: ArrowRightLeft },
   { href: "/schedule", label: "Schedule", icon: CalendarClock },
   { href: "/analytics", label: "Analytics", icon: BarChart2 },
   { href: "/settings", label: "Settings", icon: Settings2 },
