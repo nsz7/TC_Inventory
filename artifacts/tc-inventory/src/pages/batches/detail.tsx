@@ -10,9 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowRightLeft, Trash2, ChevronRight, AlertTriangle, History, Network } from "lucide-react";
+import { ArrowRightLeft, Trash2, ChevronRight, AlertTriangle, History, Network, Pencil } from "lucide-react";
 import { TransferDialog } from "@/components/transfer-dialog";
 import { DiscardDialog } from "@/components/discard-dialog";
+import { BatchEditDialog } from "@/components/batch-edit-dialog";
 
 interface Batch {
   id: number;
@@ -33,6 +34,8 @@ interface Batch {
   cleanTransferCount: number;
   hadContamination: boolean;
   notes: string | null;
+  dueDateOverride: string | null;
+  computedDueDate: string | null;
   voided: boolean;
   voidedReason: string | null;
 }
@@ -81,7 +84,8 @@ function TimelineRow({ entry }: { entry: TimelineEntry }) {
         <div className="flex items-start gap-2 py-2 border-b last:border-0">
           <ArrowRightLeft className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
           <p className="text-sm">
-            Transferred {entry.quantity} container{entry.quantity === 1 ? "" : "s"} to -{entry.targetSubcode} —{" "}
+            Transferred {entry.quantity} container{entry.quantity === 1 ? "" : "s"}
+            {entry.targetSubcode ? ` to -${entry.targetSubcode}` : ""} —{" "}
             <span className="text-muted-foreground">{who}, {when}</span>
           </p>
         </div>
@@ -154,6 +158,7 @@ export default function BatchDetail() {
   const [showFullTree, setShowFullTree] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   const { data: batch, isLoading: batchLoading } = useQuery({
     queryKey: ["batch", batchId],
@@ -218,6 +223,10 @@ export default function BatchDetail() {
         </div>
         {!batch.voided && (
           <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setEditOpen(true)} data-testid="button-edit-batch">
+              <Pencil className="mr-2 h-4 w-4" />
+              Edit
+            </Button>
             <Button variant="outline" onClick={() => setDiscardOpen(true)} disabled={isDepleted} data-testid="button-discard">
               <Trash2 className="mr-2 h-4 w-4" />
               Discard
@@ -248,6 +257,13 @@ export default function BatchDetail() {
           <div>
             <p className="text-xs text-muted-foreground uppercase tracking-wide">Medium / Container</p>
             <p className="text-sm mt-1.5">{batch.medium ?? "—"} / {batch.containerType ?? "—"}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Due date</p>
+            <p className="text-sm mt-1.5">
+              {batch.computedDueDate ? format(parseLocalDate(batch.computedDueDate), "MMM d, yyyy") : "No default set"}
+              {batch.dueDateOverride && <span className="text-muted-foreground"> (override)</span>}
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -356,6 +372,7 @@ export default function BatchDetail() {
             onOpenChange={setTransferOpen}
           />
           <DiscardDialog batchId={batch.id} maxQuantity={computedQuantity} open={discardOpen} onOpenChange={setDiscardOpen} />
+          <BatchEditDialog batch={batch} open={editOpen} onOpenChange={setEditOpen} />
         </>
       )}
     </div>

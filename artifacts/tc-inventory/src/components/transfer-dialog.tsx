@@ -91,8 +91,12 @@ export function TransferDialog({ batchId, sourceSubcode, sourceHasAlert, maxQuan
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["batch", batchId] });
       queryClient.invalidateQueries({ queryKey: ["batch-timeline", batchId] });
+      queryClient.invalidateQueries({ queryKey: ["batch-ancestors", batchId] });
+      queryClient.invalidateQueries({ queryKey: ["batch-lineage-tree", batchId] });
       queryClient.invalidateQueries({ queryKey: ["samples"] });
+      queryClient.invalidateQueries({ queryKey: ["sample-batches"] });
       queryClient.invalidateQueries({ queryKey: ["batches"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       toast({ title: "Transfer recorded" });
       setRows([newRow()]);
       setCloseOutSource(false);

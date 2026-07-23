@@ -10,6 +10,7 @@ import {
   containerEventsTable,
   batchLineageTable,
   changeLogTable,
+  appSettingsTable,
   computedQuantitySql,
 } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
@@ -19,6 +20,7 @@ import { nextSubcode } from "../lib/subcode";
 import { computeInheritedContamination, RESCUE_CONTAMINATION_STATE, markHadContamination } from "../lib/contamination";
 import { recordDiscard } from "../lib/discard";
 import { recordChanges } from "../lib/changeLog";
+import { computeDueDate } from "../lib/dueDate";
 
 const router = Router();
 
@@ -38,10 +40,24 @@ function batchRow() {
     cleanTransferCount: batchesTable.cleanTransferCount,
     hadContamination: batchesTable.hadContamination,
     notes: batchesTable.notes,
+    dueDateOverride: batchesTable.dueDateOverride,
     voided: batchesTable.voided,
     voidedReason: batchesTable.voidedReason,
     createdAt: batchesTable.createdAt,
   };
+}
+
+/** Global settings and every strain's renewal override, fetched once and
+ * reused across all rows being computed in one request rather than
+ * per-row. */
+async function loadDueDateInputs() {
+  const [settings] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.id, 1));
+  const strainOverrides = await db
+    .select({ id: strainsTable.id, storageRenewalIntervalMonthsOverride: strainsTable.storageRenewalIntervalMonthsOverride })
+    .from(strainsTable);
+  const overrideByStrainId = new Map(strainOverrides.map((s) => [s.id, s.storageRenewalIntervalMonthsOverride]));
+  const globalMonths = settings?.defaultStorageRenewalIntervalMonths ?? 6;
+  return { overrideByStrainId, globalMonths };
 }
 
 async function loadBatchOr404(id: number, res: import("express").Response) {
@@ -66,34 +82,50 @@ router.get("/batches", async (req, res) => {
   const conditions = [];
   if (!query.includeVoided) conditions.push(eq(batchesTable.voided, false));
 
-  const batches = await db
-    .select({ ...batchRow(), sampleCode: samplesTable.sampleCode })
-    .from(batchesTable)
-    .innerJoin(samplesTable, eq(samplesTable.id, batchesTable.sampleId))
-    .where(conditions.length > 0 ? and(...conditions) : undefined);
-  res.json(batches);
+  const [batches, { overrideByStrainId, globalMonths }] = await Promise.all([
+    db
+      .select({ ...batchRow(), sampleCode: samplesTable.sampleCode, strainId: samplesTable.strainId })
+      .from(batchesTable)
+      .innerJoin(samplesTable, eq(samplesTable.id, batchesTable.sampleId))
+      .where(conditions.length > 0 ? and(...conditions) : undefined),
+    loadDueDateInputs(),
+  ]);
+
+  res.json(
+    batches.map((b) => ({
+      ...b,
+      computedDueDate: computeDueDate(b, b.strainId ? overrideByStrainId.get(b.strainId) : null, globalMonths),
+    })),
+  );
 });
 
 router.get("/batches/:id", async (req, res) => {
   const id = z.coerce.number().parse(req.params.id);
-  const [batch] = await db
-    .select({
-      ...batchRow(),
-      sampleCode: samplesTable.sampleCode,
-      varietyLabel: varietiesTable.label,
-      strainLabel: strainsTable.label,
-      sampleArchived: samplesTable.archived,
-    })
-    .from(batchesTable)
-    .innerJoin(samplesTable, eq(samplesTable.id, batchesTable.sampleId))
-    .leftJoin(varietiesTable, eq(varietiesTable.id, samplesTable.varietyId))
-    .leftJoin(strainsTable, eq(strainsTable.id, samplesTable.strainId))
-    .where(eq(batchesTable.id, id));
+  const [[batch], { overrideByStrainId, globalMonths }] = await Promise.all([
+    db
+      .select({
+        ...batchRow(),
+        sampleCode: samplesTable.sampleCode,
+        varietyLabel: varietiesTable.label,
+        strainLabel: strainsTable.label,
+        strainId: samplesTable.strainId,
+        sampleArchived: samplesTable.archived,
+      })
+      .from(batchesTable)
+      .innerJoin(samplesTable, eq(samplesTable.id, batchesTable.sampleId))
+      .leftJoin(varietiesTable, eq(varietiesTable.id, samplesTable.varietyId))
+      .leftJoin(strainsTable, eq(strainsTable.id, samplesTable.strainId))
+      .where(eq(batchesTable.id, id)),
+    loadDueDateInputs(),
+  ]);
   if (!batch) {
     res.status(404).json({ error: "Batch not found" });
     return;
   }
-  res.json(batch);
+  res.json({
+    ...batch,
+    computedDueDate: computeDueDate(batch, batch.strainId ? overrideByStrainId.get(batch.strainId) : null, globalMonths),
+  });
 });
 
 router.get("/batches/:id/events", async (req, res) => {
@@ -260,6 +292,60 @@ router.get("/batches/:id/timeline", async (req, res) => {
   ].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
 
   res.json(timeline);
+});
+
+const UpdateBatchBody = z.object({
+  stage: z.string().min(1).optional(),
+  medium: z.string().nullish(),
+  containerType: z.string().nullish(),
+  location: z.string().min(1).optional(),
+  transferDate: z.coerce.date().optional(),
+  notes: z.string().nullish(),
+  // Explicit null clears the override (falls back to the computed default);
+  // omitted leaves it untouched.
+  dueDateOverride: z.coerce.date().nullish(),
+});
+
+/**
+ * Full field editing lives here, not the samples-table Edit view — that's a
+ * quick shelf-side tool for vessel counts only. Never touches quantity;
+ * that's exclusively discard/correction events (see recordDiscard and the
+ * correction route).
+ */
+router.patch("/batches/:id", async (req, res) => {
+  const id = z.coerce.number().parse(req.params.id);
+  const body = UpdateBatchBody.parse(req.body);
+
+  const [before] = await db.select().from(batchesTable).where(eq(batchesTable.id, id));
+  if (!before) {
+    res.status(404).json({ error: "Batch not found" });
+    return;
+  }
+  if (before.voided) {
+    res.status(400).json({ error: "Cannot edit a voided batch" });
+    return;
+  }
+
+  const updates: Partial<typeof batchesTable.$inferInsert> = {};
+  if (body.stage !== undefined) updates.stage = body.stage;
+  if (body.medium !== undefined) updates.medium = body.medium;
+  if (body.containerType !== undefined) updates.containerType = body.containerType;
+  if (body.location !== undefined) updates.location = body.location;
+  if (body.transferDate !== undefined) updates.transferDate = body.transferDate.toISOString().split("T")[0];
+  if (body.notes !== undefined) updates.notes = body.notes;
+  if (body.dueDateOverride !== undefined) {
+    updates.dueDateOverride = body.dueDateOverride ? body.dueDateOverride.toISOString().split("T")[0] : null;
+  }
+
+  const [after] = await db
+    .update(batchesTable)
+    .set({ ...updates, updatedBy: req.currentUser!.id, updatedAt: new Date() })
+    .where(eq(batchesTable.id, id))
+    .returning();
+
+  await recordChanges("batch", id, before, after, req.currentUser!.id);
+
+  res.json(after);
 });
 
 const SubcultureOutput = z.object({

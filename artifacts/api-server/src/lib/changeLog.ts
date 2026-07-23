@@ -8,6 +8,8 @@ export const LOGGED_FIELDS = new Set([
   "containerType",
   "location",
   "initialQuantity",
+  "notes",
+  "dueDateOverride",
   "contaminationAlert",
   "variety",
   "strain",
