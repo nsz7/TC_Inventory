@@ -12,7 +12,7 @@ import {
   changeLogTable,
   computedQuantitySql,
 } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { requireAdmin } from "../lib/auth";
 import { nextSubcode } from "../lib/subcode";
@@ -243,6 +243,122 @@ const targetBatchAlias = alias(batchesTable, "target_batch");
 // just a change_log row with fieldName="contaminationAlert" and a reason)
 // from change_log. Returns structured data; the frontend renders the
 // human-readable summary line.
+const originParentAlias = alias(batchesTable, "origin_parent");
+const originParentSampleAlias = alias(samplesTable, "origin_parent_sample");
+
+/**
+ * Surfaces the event(s) that created this batch — recorded on the parent
+ * side as a "subculture" row with target_batch_id = this batch — as one
+ * combined origin entry, rather than writing a second, separate "creation"
+ * record. The subculture row already is that fact; duplicating it risks
+ * the two drifting (e.g. on a void) for no informational gain. One row per
+ * parent (more than one only for a pooled batch), merged into a single
+ * entry so a pooled batch's origin reads as "created from X and Y" rather
+ * than two disconnected lines.
+ */
+async function loadOriginEntry(batchId: number) {
+  const [thisBatch] = await db
+    .select({ initialQuantity: batchesTable.initialQuantity, contaminationAlert: batchesTable.contaminationAlert })
+    .from(batchesTable)
+    .where(eq(batchesTable.id, batchId));
+  if (!thisBatch) return null;
+
+  const originEvents = await db
+    .select({
+      id: containerEventsTable.id,
+      parentBatchId: containerEventsTable.batchId,
+      parentSampleCode: originParentSampleAlias.sampleCode,
+      parentSubcode: originParentAlias.subcode,
+      isRescue: containerEventsTable.isRescue,
+      eventDate: containerEventsTable.eventDate,
+      recordedAt: containerEventsTable.createdAt,
+      userId: containerEventsTable.createdBy,
+      userDisplayName: usersTable.displayName,
+    })
+    .from(containerEventsTable)
+    .innerJoin(originParentAlias, eq(originParentAlias.id, containerEventsTable.batchId))
+    .innerJoin(originParentSampleAlias, eq(originParentSampleAlias.id, originParentAlias.sampleId))
+    .leftJoin(usersTable, eq(usersTable.id, containerEventsTable.createdBy))
+    .where(
+      and(
+        eq(containerEventsTable.targetBatchId, batchId),
+        eq(containerEventsTable.eventType, "subculture"),
+        eq(containerEventsTable.voided, false),
+      ),
+    );
+  if (originEvents.length === 0) return null; // root/initiation batch — nothing created it
+
+  // For each parent, "N used from source" is only claimed when it's
+  // unambiguous: a pooled parent's consumption always names this batch
+  // directly; an ordinary single-child subculture's operation-level
+  // consumption is attributable here only if this was the sole child that
+  // operation produced (same parent, same event date) — otherwise the
+  // ledger genuinely doesn't record how that number splits between
+  // children, so no figure is shown rather than guessing one.
+  const parents = await Promise.all(
+    originEvents.map(async (origin) => {
+      const [siblingCount, transferOutRows] = await Promise.all([
+        db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(containerEventsTable)
+          .where(
+            and(
+              eq(containerEventsTable.batchId, origin.parentBatchId),
+              eq(containerEventsTable.eventType, "subculture"),
+              eq(containerEventsTable.eventDate, origin.eventDate),
+              eq(containerEventsTable.voided, false),
+            ),
+          ),
+        db
+          .select({ quantity: containerEventsTable.quantity, targetBatchId: containerEventsTable.targetBatchId })
+          .from(containerEventsTable)
+          .where(
+            and(
+              eq(containerEventsTable.batchId, origin.parentBatchId),
+              eq(containerEventsTable.eventType, "transfer_out"),
+              eq(containerEventsTable.eventDate, origin.eventDate),
+              eq(containerEventsTable.voided, false),
+            ),
+          ),
+      ]);
+
+      const pooledConsumption = transferOutRows.find((t) => t.targetBatchId === batchId);
+      const soleChildOnThatDate = siblingCount[0]?.count === 1;
+      const untargetedConsumption = transferOutRows.find((t) => t.targetBatchId === null);
+      const usedFromSource = pooledConsumption
+        ? pooledConsumption.quantity
+        : soleChildOnThatDate && untargetedConsumption
+          ? untargetedConsumption.quantity
+          : null;
+
+      return {
+        sampleCode: origin.parentSampleCode,
+        subcode: origin.parentSubcode,
+        usedFromSource,
+      };
+    }),
+  );
+
+  const first = originEvents[0]!;
+  return {
+    kind: "origin" as const,
+    id: `origin-${first.id}`,
+    isRescue: originEvents.some((e) => e.isRescue),
+    // Under the current contamination model, a batch's alert can only
+    // become true at creation one of two ways: a rescue (self-originated,
+    // isRescue above), or ordinary inheritance from a parent whose alert
+    // was already true. So "alert true and not a rescue" always means
+    // inherited — no separate marker or historical parent lookup needed.
+    alertInherited: !originEvents.some((e) => e.isRescue) && thisBatch.contaminationAlert,
+    totalProduced: thisBatch.initialQuantity,
+    parents,
+    eventDate: first.eventDate,
+    recordedAt: first.recordedAt,
+    userId: first.userId,
+    userDisplayName: first.userDisplayName,
+  };
+}
+
 router.get("/batches/:id/timeline", async (req, res) => {
   const id = z.coerce.number().parse(req.params.id);
 
@@ -265,6 +381,7 @@ router.get("/batches/:id/timeline", async (req, res) => {
       userDisplayName: usersTable.displayName,
       targetBatchId: containerEventsTable.targetBatchId,
       targetSubcode: targetBatchAlias.subcode,
+      isRescue: containerEventsTable.isRescue,
     })
     .from(containerEventsTable)
     .leftJoin(usersTable, eq(usersTable.id, containerEventsTable.createdBy))
@@ -286,12 +403,16 @@ router.get("/batches/:id/timeline", async (req, res) => {
     .leftJoin(usersTable, eq(usersTable.id, changeLogTable.changedBy))
     .where(and(eq(changeLogTable.recordType, "batch"), eq(changeLogTable.recordId, id)));
 
+  const originEntry = await loadOriginEntry(id);
+
   // Sorted by when it happened (eventDate for events, occurredAt for
   // changes), not by created_at/row-insertion order — the same reasoning as
   // the subcode-vs-transfer-date sort elsewhere: the record of an event and
   // the event itself can genuinely differ in date, and the timeline should
   // read in the order things actually happened. recordedAt breaks ties
-  // between same-day entries.
+  // between same-day entries. The origin entry is appended last
+  // unconditionally, rather than sorted in by date, so it always anchors
+  // the very bottom of the timeline regardless of any date edge case.
   const timeline = [
     ...events.map((e) => ({ kind: "event" as const, ...e, sortDate: e.eventDate, sortTiebreak: e.recordedAt })),
     ...changes.map((c) => ({ kind: "field_change" as const, ...c, sortDate: c.occurredAt, sortTiebreak: c.occurredAt })),
@@ -301,7 +422,7 @@ router.get("/batches/:id/timeline", async (req, res) => {
     return new Date(b.sortTiebreak).getTime() - new Date(a.sortTiebreak).getTime();
   });
 
-  res.json(timeline.map(({ sortDate, sortTiebreak, ...entry }) => entry));
+  res.json([...timeline.map(({ sortDate, sortTiebreak, ...entry }) => entry), ...(originEntry ? [originEntry] : [])]);
 });
 
 const UpdateBatchBody = z.object({
@@ -500,6 +621,7 @@ router.post("/batches/:id/subculture", async (req, res) => {
         eventType: "subculture",
         quantity: 0,
         targetBatchId: child.id,
+        isRescue: output.isRescue ?? false,
         eventDate: transferDateStr,
         createdBy: req.currentUser!.id,
       });
