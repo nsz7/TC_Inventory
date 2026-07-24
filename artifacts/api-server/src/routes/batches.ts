@@ -267,8 +267,14 @@ router.get("/batches/:id/timeline", async (req, res) => {
       quantity: containerEventsTable.quantity,
       reason: containerEventsTable.reason,
       note: containerEventsTable.note,
+      // eventDate is when it happened; recordedAt is when this row was
+      // entered — they're often the same day, but catching up on a few
+      // days of paper records is ordinary lab work, so they can genuinely
+      // differ. eventDate is the primary date shown and the sort key;
+      // recordedAt is secondary. (change_log rows below have no such
+      // split — an edit happens at the moment it's recorded.)
       eventDate: containerEventsTable.eventDate,
-      occurredAt: containerEventsTable.createdAt,
+      recordedAt: containerEventsTable.createdAt,
       userId: containerEventsTable.createdBy,
       userDisplayName: usersTable.displayName,
       targetBatchId: containerEventsTable.targetBatchId,
@@ -294,12 +300,22 @@ router.get("/batches/:id/timeline", async (req, res) => {
     .leftJoin(usersTable, eq(usersTable.id, changeLogTable.changedBy))
     .where(and(eq(changeLogTable.recordType, "batch"), eq(changeLogTable.recordId, id)));
 
+  // Sorted by when it happened (eventDate for events, occurredAt for
+  // changes), not by created_at/row-insertion order — the same reasoning as
+  // the subcode-vs-transfer-date sort elsewhere: the record of an event and
+  // the event itself can genuinely differ in date, and the timeline should
+  // read in the order things actually happened. recordedAt breaks ties
+  // between same-day entries.
   const timeline = [
-    ...events.map((e) => ({ kind: "event" as const, ...e })),
-    ...changes.map((c) => ({ kind: "field_change" as const, ...c })),
-  ].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+    ...events.map((e) => ({ kind: "event" as const, ...e, sortDate: e.eventDate, sortTiebreak: e.recordedAt })),
+    ...changes.map((c) => ({ kind: "field_change" as const, ...c, sortDate: c.occurredAt, sortTiebreak: c.occurredAt })),
+  ].sort((a, b) => {
+    const byDate = new Date(b.sortDate).getTime() - new Date(a.sortDate).getTime();
+    if (byDate !== 0) return byDate;
+    return new Date(b.sortTiebreak).getTime() - new Date(a.sortTiebreak).getTime();
+  });
 
-  res.json(timeline);
+  res.json(timeline.map(({ sortDate, sortTiebreak, ...entry }) => entry));
 });
 
 const UpdateBatchBody = z.object({

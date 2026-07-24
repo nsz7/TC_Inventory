@@ -43,16 +43,20 @@ interface Batch {
 interface TimelineEntry {
   kind: "event" | "field_change";
   id: number;
-  occurredAt: string;
   userDisplayName: string | null;
-  // event
+  // event — eventDate is when it happened (primary); recordedAt is when
+  // this row was entered (secondary). They can genuinely differ: catching
+  // up on a few days of paper records is ordinary lab work.
   eventType?: "transfer_out" | "discard" | "correction" | "subculture";
   quantity?: number;
   reason?: string | null;
   eventDate?: string;
+  recordedAt?: string;
   note?: string | null;
   targetSubcode?: string | null;
-  // field_change
+  // field_change — a single date: an edit happens at the moment it's
+  // recorded, so there's nothing to split.
+  occurredAt?: string;
   fieldName?: string;
   oldValue?: string | null;
   newValue?: string | null;
@@ -74,20 +78,38 @@ const FIELD_LABELS: Record<string, string> = {
   voidedReason: "Void reason",
 };
 
-function TimelineRow({ entry }: { entry: TimelineEntry }) {
-  const when = format(new Date(entry.occurredAt), "MMM d, yyyy");
+/** Wraps an event description with its two-part date: the event date
+ * prominent (what actually happened, and when), the recording time small
+ * and secondary (who typed it in, and when they got to it). These can
+ * differ — entering a few days of paper records in one sitting is ordinary
+ * lab work — so collapsing them into one date would show the wrong one. */
+function EventRow({ icon, description, entry }: { icon: React.ReactNode; description: React.ReactNode; entry: TimelineEntry }) {
+  const eventWhen = entry.eventDate ? format(parseLocalDate(entry.eventDate), "MMM d, yyyy") : "—";
+  const recordedWhen = entry.recordedAt ? format(new Date(entry.recordedAt), "MMM d") : null;
   const who = entry.userDisplayName ?? "Unknown";
 
+  return (
+    <div className="flex items-start gap-2 py-2 border-b last:border-0">
+      {icon}
+      <div>
+        <p className="text-sm">
+          {description} — {eventWhen}
+        </p>
+        {recordedWhen && <p className="text-xs text-muted-foreground">recorded {recordedWhen} by {who}</p>}
+      </div>
+    </div>
+  );
+}
+
+function TimelineRow({ entry }: { entry: TimelineEntry }) {
   if (entry.kind === "event") {
     if (entry.eventType === "subculture") {
       return (
-        <div className="flex items-start gap-2 py-2 border-b last:border-0">
-          <Split className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-          <p className="text-sm">
-            Subcultured{entry.targetSubcode ? ` to -${entry.targetSubcode}` : ""} —{" "}
-            <span className="text-muted-foreground">{who}, {when}</span>
-          </p>
-        </div>
+        <EventRow
+          entry={entry}
+          icon={<Split className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />}
+          description={<>Subcultured{entry.targetSubcode ? ` to -${entry.targetSubcode}` : ""}</>}
+        />
       );
     }
     if (entry.eventType === "transfer_out") {
@@ -98,41 +120,44 @@ function TimelineRow({ entry }: { entry: TimelineEntry }) {
       // destination, since the consumed containers didn't collectively
       // land in one place.
       return (
-        <div className="flex items-start gap-2 py-2 border-b last:border-0">
-          <ArrowRightLeft className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-          <p className="text-sm">
-            {entry.targetSubcode
+        <EventRow
+          entry={entry}
+          icon={<ArrowRightLeft className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />}
+          description={
+            entry.targetSubcode
               ? `Transferred ${entry.quantity} container${entry.quantity === 1 ? "" : "s"} to -${entry.targetSubcode}`
-              : `${entry.quantity} container${entry.quantity === 1 ? "" : "s"} used up in this transfer`}
-            {" — "}
-            <span className="text-muted-foreground">{who}, {when}</span>
-          </p>
-        </div>
+              : `${entry.quantity} container${entry.quantity === 1 ? "" : "s"} used up in this transfer`
+          }
+        />
       );
     }
     if (entry.eventType === "discard") {
       return (
-        <div className="flex items-start gap-2 py-2 border-b last:border-0">
-          <Trash2 className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-          <p className="text-sm">
-            Discarded {entry.quantity}{entry.reason ? `, ${entry.reason}` : ""} —{" "}
-            <span className="text-muted-foreground">{who}, {when}</span>
-          </p>
-        </div>
+        <EventRow
+          entry={entry}
+          icon={<Trash2 className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />}
+          description={<>Discarded {entry.quantity}{entry.reason ? `, ${entry.reason}` : ""}</>}
+        />
       );
     }
     return (
-      <div className="flex items-start gap-2 py-2 border-b last:border-0">
-        <ArrowRightLeft className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-        <p className="text-sm">
-          Correction: {(entry.quantity ?? 0) > 0 ? "+" : ""}
-          {entry.quantity} ({entry.reason}) — <span className="text-muted-foreground">{who}, {when}</span>
-        </p>
-      </div>
+      <EventRow
+        entry={entry}
+        icon={<ArrowRightLeft className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />}
+        description={
+          <>
+            Correction: {(entry.quantity ?? 0) > 0 ? "+" : ""}
+            {entry.quantity} ({entry.reason})
+          </>
+        }
+      />
     );
   }
 
-  // field_change
+  // field_change — a single date (occurredAt): an edit happens at the
+  // moment it's recorded, so there's nothing to split into primary/secondary.
+  const when = format(new Date(entry.occurredAt!), "MMM d, yyyy");
+  const who = entry.userDisplayName ?? "Unknown";
   const isManualAlertOverride = entry.fieldName === "contaminationAlert";
   const label = FIELD_LABELS[entry.fieldName ?? ""] ?? entry.fieldName;
 
@@ -296,6 +321,10 @@ export default function BatchDetail() {
               {batch.computedDueDate ? format(parseLocalDate(batch.computedDueDate), "MMM d, yyyy") : "No default set"}
               {batch.dueDateOverride && <span className="text-muted-foreground"> (override)</span>}
             </p>
+          </div>
+          <div className="col-span-2 sm:col-span-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Notes</p>
+            <p className="text-sm mt-1.5 whitespace-pre-wrap">{batch.notes ?? "—"}</p>
           </div>
         </CardContent>
       </Card>
