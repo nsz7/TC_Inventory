@@ -9,3 +9,4 @@ export * from "./loginLog";
 export * from "./changeLog";
 export * from "./appSettings";
 export * from "./options";
+export * from "./stageIntervals";

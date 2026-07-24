@@ -5,19 +5,26 @@ export interface LookupOption {
   category: string;
   label: string;
   sortOrder: number;
+  active: boolean;
   createdAt: string;
 }
 
-async function fetchOptions(category: string): Promise<LookupOption[]> {
-  const res = await fetch(`/api/options?category=${encodeURIComponent(category)}`);
+async function fetchOptions(category: string, includeInactive: boolean): Promise<LookupOption[]> {
+  const params = new URLSearchParams({ category });
+  if (includeInactive) params.set("includeInactive", "true");
+  const res = await fetch(`/api/options?${params}`);
   if (!res.ok) throw new Error("Failed to fetch options");
   return res.json();
 }
 
-export function useOptions(category: string) {
+/** Every other dropdown in the app wants active-only (the default). The
+ * Settings management screen passes includeInactive so it can show
+ * deactivated entries too, with a way to reactivate them — entries in use
+ * are never deleted, only deactivated, so there needs to be a way back. */
+export function useOptions(category: string, includeInactive = false) {
   return useQuery({
-    queryKey: ["options", category],
-    queryFn: () => fetchOptions(category),
+    queryKey: ["options", category, { includeInactive }],
+    queryFn: () => fetchOptions(category, includeInactive),
     staleTime: 60_000,
   });
 }
@@ -38,12 +45,19 @@ export function useAddOption(category: string) {
   });
 }
 
-export function useDeleteOption(category: string) {
+/** Deactivate/reactivate, never delete — deactivated entries vanish from
+ * every other dropdown but keep displaying correctly on existing records. */
+export function useSetOptionActive(category: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/options/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete option");
+    mutationFn: async ({ id, active }: { id: number; active: boolean }) => {
+      const res = await fetch(`/api/options/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active }),
+      });
+      if (!res.ok) throw new Error("Failed to update option");
+      return res.json();
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["options", category] }),
   });
