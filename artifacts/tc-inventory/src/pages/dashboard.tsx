@@ -15,13 +15,15 @@ interface DashboardSummary {
   byStage: { label: string; count: number }[];
   recentEvents: {
     id: number;
-    batchId: number;
     eventType: string;
     quantity: number;
     reason: string | null;
-    targetBatchId: number | null;
     eventDate: string;
     createdAt: string;
+    sampleCode: string;
+    subcode: string;
+    targetSampleCode: string | null;
+    targetSubcode: string | null;
   }[];
 }
 
@@ -119,11 +121,11 @@ export default function Dashboard() {
                   <div key={event.id} className="flex items-center justify-between p-4 border rounded-md">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm font-medium">Batch #{event.batchId}</span>
-                        {event.targetBatchId && (
+                        <span className="font-mono text-sm font-medium">{event.sampleCode}-{event.subcode}</span>
+                        {event.targetSampleCode && event.targetSubcode && (
                           <>
                             <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-mono text-sm font-medium">Batch #{event.targetBatchId}</span>
+                            <span className="font-mono text-sm font-medium">{event.targetSampleCode}-{event.targetSubcode}</span>
                           </>
                         )}
                       </div>
