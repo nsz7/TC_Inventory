@@ -214,6 +214,7 @@ async function rescue(
     eventType: "subculture",
     quantity: 0,
     targetBatchId: child.id,
+    isRescue: true,
     eventDate: fields.transferDate,
     createdBy,
   });
@@ -461,13 +462,15 @@ async function main() {
   );
   // Two containers show visible contamination and are discarded outright —
   // had_contamination on s2b2, no alert (never raised on the batch where
-  // contamination was observed).
+  // contamination was observed). Same day as the rescue below, so the two
+  // read as one contamination episode in s2b2's own timeline rather than
+  // as unrelated events.
   await discard(s2b2, 2, "contaminated", "2026-02-20", by);
   // A third, separately-suspect container is rescued instead of discarded —
   // decontaminated and subcultured. Only the rescued batch carries the alert.
   const s2b3 = await rescue(
     s2b2,
-    { consumedQuantity: 1, producedQuantity: 1, stage: "multiplication", transferDate: "2026-02-22", location: "Shelf B-1" },
+    { consumedQuantity: 1, producedQuantity: 1, stage: "multiplication", transferDate: "2026-02-20", location: "Shelf B-1" },
     by,
   );
   const s2b4 = await subculture(

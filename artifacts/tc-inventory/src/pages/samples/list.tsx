@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { format } from "date-fns";
@@ -274,6 +274,16 @@ export default function SamplesList() {
 
   const stages = useMemo(() => (stageOptions ?? []).map((s: StageOption) => s.label), [stageOptions]);
 
+  // Shared between the Compact table's sample-level filtering and its
+  // per-sample batch rendering, so a batch hidden by "Hide zero vessels"
+  // can also drop its parent sample out of view entirely once nothing of
+  // it remains to show — matching the Detail view's per-batch filtering.
+  const visibleBatchesFor = useCallback(
+    (sampleId: number) =>
+      (batchesBySample.get(sampleId) ?? []).filter((b) => !b.voided && (!hideZeroVessels || Number(b.computedQuantity) > 0)),
+    [batchesBySample, hideZeroVessels],
+  );
+
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (samples ?? [])
@@ -284,14 +294,13 @@ export default function SamplesList() {
           const hay = `${s.sampleCode} ${s.varietyLabel ?? ""} ${s.strainLabel ?? ""}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }
-        if (stageFilter !== "all") {
-          const sampleBatches = batchesBySample.get(s.id) ?? [];
-          if (!sampleBatches.some((b) => b.stage === stageFilter)) return false;
-        }
+        const sampleBatches = visibleBatchesFor(s.id);
+        if (hideZeroVessels && sampleBatches.length === 0) return false;
+        if (stageFilter !== "all" && !sampleBatches.some((b) => b.stage === stageFilter)) return false;
         return true;
       })
       .sort((a, b) => a.sampleCode.localeCompare(b.sampleCode));
-  }, [samples, search, hideArchived, stageFilter, batchesBySample]);
+  }, [samples, search, hideArchived, stageFilter, hideZeroVessels, visibleBatchesFor]);
 
   const flatBatchRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -415,14 +424,12 @@ export default function SamplesList() {
               Hide archived
             </Label>
           </label>
-          {viewMode !== "compact" && (
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <Checkbox checked={hideZeroVessels} onCheckedChange={(v) => setHideZeroVessels(!!v)} id="hide-zero-vessels" />
-              <Label htmlFor="hide-zero-vessels" className="text-sm cursor-pointer">
-                Hide zero vessels
-              </Label>
-            </label>
-          )}
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <Checkbox checked={hideZeroVessels} onCheckedChange={(v) => setHideZeroVessels(!!v)} id="hide-zero-vessels" />
+            <Label htmlFor="hide-zero-vessels" className="text-sm cursor-pointer">
+              Hide zero vessels
+            </Label>
+          </label>
           <span className="text-xs text-muted-foreground ml-auto">
             {viewMode === "compact"
               ? `${rows.length} sample${rows.length !== 1 ? "s" : ""}`
@@ -456,7 +463,7 @@ export default function SamplesList() {
               </TableHeader>
               <TableBody>
                 {rows.map((sample) => {
-                  const sampleBatches = (batchesBySample.get(sample.id) ?? []).filter((b) => !b.voided);
+                  const sampleBatches = visibleBatchesFor(sample.id);
                   const isExpanded = expanded.has(sample.id);
                   const multiBatch = sampleBatches.length > 1;
                   const onlyBatch = sampleBatches.length === 1 ? sampleBatches[0] : null;

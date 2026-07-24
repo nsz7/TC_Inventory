@@ -40,9 +40,15 @@ interface Batch {
   voidedReason: string | null;
 }
 
+interface OriginParent {
+  sampleCode: string;
+  subcode: string;
+  usedFromSource: number | null;
+}
+
 interface TimelineEntry {
-  kind: "event" | "field_change";
-  id: number;
+  kind: "event" | "field_change" | "origin";
+  id: number | string;
   userDisplayName: string | null;
   // event — eventDate is when it happened (primary); recordedAt is when
   // this row was entered (secondary). They can genuinely differ: catching
@@ -54,12 +60,20 @@ interface TimelineEntry {
   recordedAt?: string;
   note?: string | null;
   targetSubcode?: string | null;
+  isRescue?: boolean;
   // field_change — a single date: an edit happens at the moment it's
   // recorded, so there's nothing to split.
   occurredAt?: string;
   fieldName?: string;
   oldValue?: string | null;
   newValue?: string | null;
+  // origin — always sorted to the very bottom of the timeline by the API,
+  // regardless of date, since it's the oldest fact about this batch there
+  // is. alertInherited is only meaningful when this batch's alert is set
+  // and isRescue is false — the two ways an alert can exist at creation.
+  alertInherited?: boolean;
+  totalProduced?: number;
+  parents?: OriginParent[];
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -102,13 +116,45 @@ function EventRow({ icon, description, entry }: { icon: React.ReactNode; descrip
 }
 
 function TimelineRow({ entry }: { entry: TimelineEntry }) {
+  if (entry.kind === "origin") {
+    const parents = entry.parents ?? [];
+    const parentText = parents
+      .map((p) => `${p.sampleCode}-${p.subcode}${p.usedFromSource ? ` (${p.usedFromSource} used from source)` : ""}`)
+      .join(" and ");
+    const description = entry.isRescue ? (
+      <>Created by rescuing contaminated material from {parentText} — alert raised</>
+    ) : (
+      <>
+        {entry.totalProduced} container{entry.totalProduced === 1 ? "" : "s"} created from {parentText}
+        {entry.alertInherited && (
+          <>
+            {" "}
+            — alert inherited{parents.length === 1 ? ` from ${parents[0]!.sampleCode}-${parents[0]!.subcode}` : ""}
+          </>
+        )}
+      </>
+    );
+    return (
+      <EventRow
+        entry={entry}
+        icon={entry.isRescue ? <Split className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" /> : <Split className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />}
+        description={description}
+      />
+    );
+  }
   if (entry.kind === "event") {
     if (entry.eventType === "subculture") {
       return (
         <EventRow
           entry={entry}
-          icon={<Split className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />}
-          description={<>Subcultured{entry.targetSubcode ? ` to -${entry.targetSubcode}` : ""}</>}
+          icon={<Split className={`h-4 w-4 mt-0.5 shrink-0 ${entry.isRescue ? "text-amber-600" : "text-muted-foreground"}`} />}
+          description={
+            entry.isRescue ? (
+              <>Rescued{entry.targetSubcode ? ` to -${entry.targetSubcode}` : ""} — alert raised</>
+            ) : (
+              <>Subcultured{entry.targetSubcode ? ` to -${entry.targetSubcode}` : ""}</>
+            )
+          }
         />
       );
     }

@@ -29,6 +29,9 @@ import { usersTable } from "./users";
  *   Written on every subculture operation regardless of whether anything
  *   was consumed, so the source batch's timeline never goes silent on its
  *   own most common activity just because the lab kept containers back.
+ *   is_rescue marks whether that specific creation was a rescue of
+ *   contaminated material (forces the child's alert on, bypassing normal
+ *   inheritance) — false on every other event type.
  */
 export const CONTAINER_EVENT_TYPES = ["transfer_out", "discard", "correction", "subculture"] as const;
 export type ContainerEventType = (typeof CONTAINER_EVENT_TYPES)[number];
@@ -54,6 +57,13 @@ export const containerEventsTable = pgTable(
     // only in the legacy per-output-consumption shape. Null on the
     // operation-level consumption transfer_out and on discard/correction.
     targetBatchId: integer("target_batch_id").references((): AnyPgColumn => batchesTable.id),
+    // Only meaningful on a subculture row — whether this specific creation
+    // was a rescue of contaminated material rather than an ordinary
+    // transfer. Persisted here (not inferred from the resulting alert)
+    // because an inherited alert and a freshly-raised one are otherwise
+    // indistinguishable: both just show contaminationAlert=true on the
+    // child.
+    isRescue: boolean("is_rescue").notNull().default(false),
     eventDate: date("event_date").notNull(),
     note: text("note"),
     createdBy: integer("created_by").references(() => usersTable.id),
