@@ -5,6 +5,16 @@ import pg from "pg";
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+// On Windows, pnpm is installed as a pnpm.cmd shim; execFileSync resolves an
+// executable by exact name (no PATHEXT lookup, unlike shell invocation), so
+// the bare name "pnpm" is a plain ENOENT there. macOS/Linux have no such
+// shim, so the unmodified name is correct on those platforms.
+const PNPM_COMMAND = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+
+function runPnpm(args: string[]) {
+  execFileSync(PNPM_COMMAND, args, { stdio: "inherit" });
+}
+
 /**
  * Development convenience only: drops and recreates the database named in
  * DATABASE_URL, pushes the schema, and reseeds — one command instead of the
@@ -47,10 +57,10 @@ async function main() {
   }
 
   console.log("Pushing schema...");
-  execFileSync("pnpm", ["--filter", "@workspace/db", "run", "push-force"], { stdio: "inherit" });
+  runPnpm(["--filter", "@workspace/db", "run", "push-force"]);
 
   console.log("Seeding...");
-  execFileSync("pnpm", ["--filter", "scripts", "run", "seed"], { stdio: "inherit" });
+  runPnpm(["--filter", "scripts", "run", "seed"]);
 
   console.log("Database reset and reseeded.");
 }
