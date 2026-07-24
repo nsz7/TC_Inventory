@@ -12,6 +12,7 @@ import {
   batchLineageTable,
   lookupOptionsTable,
   appSettingsTable,
+  stageIntervalsTable,
 } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 
@@ -314,6 +315,29 @@ async function seedOptions() {
   }
 }
 
+// Invented numbers, not real lab intervals — isPlaceholder stays true until
+// an admin reviews and sets the real value via Settings. Long-term storage
+// isn't here: it has its own months-based global/per-strain precedence.
+const PLACEHOLDER_STAGE_INTERVAL_DAYS: Record<string, number> = {
+  initiation: 30,
+  multiplication: 30,
+  rooting: 45,
+  acclimatization: 21,
+  revitalization: 60,
+};
+
+async function seedStageIntervals() {
+  const existing = await db.select().from(stageIntervalsTable);
+  if (existing.length > 0) return;
+  await db.insert(stageIntervalsTable).values(
+    Object.entries(PLACEHOLDER_STAGE_INTERVAL_DAYS).map(([stage, intervalDays]) => ({
+      stage,
+      intervalDays,
+      isPlaceholder: true,
+    })),
+  );
+}
+
 const SEEDED_VARIETIES = ["Desiree", "Cavendish", "Russet Burbank"];
 const SEEDED_SAMPLE_CODES = ["FA26_001", "FA26_002", "FA26_003", "FA26_004"];
 
@@ -365,6 +389,7 @@ async function main() {
   }
 
   await seedOptions();
+  await seedStageIntervals();
   await db.insert(appSettingsTable).values({ id: 1, defaultMinStorageStock: 5, defaultStorageRenewalIntervalMonths: 6 });
 
   const DEFAULT_PASSWORD = "changeme123";

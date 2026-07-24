@@ -8,6 +8,8 @@ import strainsRouter from "./strains";
 import appSettingsRouter from "./appSettings";
 import usersRouter from "./users";
 import changeLogRouter from "./changeLog";
+import stageIntervalsRouter from "./stageIntervals";
+import scheduleRouter from "./schedule";
 
 const router: IRouter = Router();
 
@@ -20,6 +22,8 @@ router.use(strainsRouter);
 router.use(appSettingsRouter);
 router.use(usersRouter);
 router.use(changeLogRouter);
+router.use(stageIntervalsRouter);
+router.use(scheduleRouter);
 
 // Seed default lookup options if empty
 seedOptions().catch((err) => console.error("seedOptions failed:", err));

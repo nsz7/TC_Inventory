@@ -10,7 +10,6 @@ import {
   containerEventsTable,
   batchLineageTable,
   changeLogTable,
-  appSettingsTable,
   computedQuantitySql,
 } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
@@ -20,7 +19,7 @@ import { nextSubcode } from "../lib/subcode";
 import { computeInheritedContamination, RESCUE_CONTAMINATION_STATE, markHadContamination } from "../lib/contamination";
 import { recordDiscard } from "../lib/discard";
 import { recordChanges } from "../lib/changeLog";
-import { computeDueDate } from "../lib/dueDate";
+import { computeDueDate, loadDueDateInputs } from "../lib/dueDate";
 
 const router = Router();
 
@@ -47,19 +46,6 @@ function batchRow() {
   };
 }
 
-/** Global settings and every strain's renewal override, fetched once and
- * reused across all rows being computed in one request rather than
- * per-row. */
-async function loadDueDateInputs() {
-  const [settings] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.id, 1));
-  const strainOverrides = await db
-    .select({ id: strainsTable.id, storageRenewalIntervalMonthsOverride: strainsTable.storageRenewalIntervalMonthsOverride })
-    .from(strainsTable);
-  const overrideByStrainId = new Map(strainOverrides.map((s) => [s.id, s.storageRenewalIntervalMonthsOverride]));
-  const globalMonths = settings?.defaultStorageRenewalIntervalMonths ?? 6;
-  return { overrideByStrainId, globalMonths };
-}
-
 async function loadBatchOr404(id: number, res: import("express").Response) {
   const [batch] = await db.select().from(batchesTable).where(eq(batchesTable.id, id));
   if (!batch) {
@@ -82,7 +68,7 @@ router.get("/batches", async (req, res) => {
   const conditions = [];
   if (!query.includeVoided) conditions.push(eq(batchesTable.voided, false));
 
-  const [batches, { overrideByStrainId, globalMonths }] = await Promise.all([
+  const [batches, { overrideByStrainId, globalMonths, stageIntervalDays }] = await Promise.all([
     db
       .select({ ...batchRow(), sampleCode: samplesTable.sampleCode, strainId: samplesTable.strainId })
       .from(batchesTable)
@@ -94,14 +80,14 @@ router.get("/batches", async (req, res) => {
   res.json(
     batches.map((b) => ({
       ...b,
-      computedDueDate: computeDueDate(b, b.strainId ? overrideByStrainId.get(b.strainId) : null, globalMonths),
+      computedDueDate: computeDueDate(b, b.strainId ? overrideByStrainId.get(b.strainId) : null, globalMonths, stageIntervalDays),
     })),
   );
 });
 
 router.get("/batches/:id", async (req, res) => {
   const id = z.coerce.number().parse(req.params.id);
-  const [[batch], { overrideByStrainId, globalMonths }] = await Promise.all([
+  const [[batch], { overrideByStrainId, globalMonths, stageIntervalDays }] = await Promise.all([
     db
       .select({
         ...batchRow(),
@@ -124,7 +110,7 @@ router.get("/batches/:id", async (req, res) => {
   }
   res.json({
     ...batch,
-    computedDueDate: computeDueDate(batch, batch.strainId ? overrideByStrainId.get(batch.strainId) : null, globalMonths),
+    computedDueDate: computeDueDate(batch, batch.strainId ? overrideByStrainId.get(batch.strainId) : null, globalMonths, stageIntervalDays),
   });
 });
 
