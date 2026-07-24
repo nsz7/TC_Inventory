@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { db, samplesTable, batchesTable, containerEventsTable } from "@workspace/db";
-import { sql, eq, and, desc } from "drizzle-orm";
+import { db, samplesTable, batchesTable, containerEventsTable, computedQuantitySql } from "@workspace/db";
+import { sql, eq, and, gt, desc } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 const router = Router();
@@ -19,10 +19,14 @@ router.get("/dashboard/summary", async (_req, res) => {
     .from(batchesTable)
     .where(eq(batchesTable.voided, false));
 
+  // Only counts alert-carrying batches that still hold containers: an alert
+  // stays set on a batch that's since been fully consumed/discarded, but
+  // there's nothing physically on a shelf left to warn anyone about. Matches
+  // the Samples table, which hides zero-vessel batches by default.
   const [{ contaminationAlerts }] = await db
     .select({ contaminationAlerts: sql<number>`count(*)::int` })
     .from(batchesTable)
-    .where(and(eq(batchesTable.contaminationAlert, true), eq(batchesTable.voided, false)));
+    .where(and(eq(batchesTable.contaminationAlert, true), eq(batchesTable.voided, false), gt(computedQuantitySql(), 0)));
 
   const byStage = await db
     .select({ label: batchesTable.stage, count: sql<number>`count(*)::int` })
